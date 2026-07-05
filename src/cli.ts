@@ -35,7 +35,14 @@ program
   .command("init")
   .description("Generate .aiflow/ config scaffold in the current directory")
   .action(async () => {
-    console.log("init: not implemented yet");
+    const { runInit } = await import("./commands/init");
+    const result = runInit(process.cwd());
+    if (result.created) {
+      console.log("Created .aiflow/config scaffold.");
+    } else {
+      console.log(`Skipped: ${result.reason}`);
+      process.exitCode = 1;
+    }
   });
 
 program
