@@ -57,4 +57,45 @@ program
     process.exitCode = state.stages[0].status === "done" ? 0 : 1;
   });
 
+program
+  .command("status")
+  .description("Render the current run snapshot (read-only)")
+  .option("--run-id <id>", "show a specific run (defaults to latest)")
+  .option("--tail <n>", "show only the last N events", (v) => Number(v), 8)
+  .option("--no-color", "disable ANSI colors")
+  .action(async (opts: { runId?: string; tail: number; color: boolean }) => {
+    const { runStatus } = await import("./commands/monitor");
+    const code = runStatus(process.cwd(), {
+      runId: opts.runId,
+      tail: opts.tail,
+      color: opts.color,
+    });
+    process.exitCode = code;
+  });
+
+program
+  .command("watch")
+  .description("Poll and re-render the current run snapshot every second")
+  .option("--run-id <id>", "show a specific run (defaults to latest)")
+  .option("--tail <n>", "show only the last N events", (v) => Number(v), 8)
+  .option("--interval <ms>", "polling interval in ms", (v) => Number(v), 1000)
+  .action(async (opts: { runId?: string; tail: number; interval: number }) => {
+    const { watchRun, readRunSnapshot } = await import("./commands/monitor");
+    const controller = new AbortController();
+    const onSigint = () => controller.abort();
+    process.once("SIGINT", onSigint);
+    try {
+      await watchRun(process.cwd(), {
+        tail: opts.tail,
+        intervalMs: opts.interval,
+        signal: controller.signal,
+        readSnapshot: opts.runId
+          ? (cwd) => readRunSnapshot(cwd, opts.runId)
+          : undefined,
+      });
+    } finally {
+      process.removeListener("SIGINT", onSigint);
+    }
+  });
+
 program.parseAsync(process.argv);
