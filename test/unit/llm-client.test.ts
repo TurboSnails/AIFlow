@@ -23,7 +23,7 @@ test("callReviewer sends an OpenAI-compatible chat completion request and return
       }),
       { status: 200 }
     );
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   const result = await callReviewer(profile, "review this diff", fakeFetch);
   expect(result).toEqual({ summary: "ok", issues: [] });
@@ -32,24 +32,24 @@ test("callReviewer sends an OpenAI-compatible chat completion request and return
 test("callReviewer throws when the API key env var is not set", async () => {
   delete process.env.MISSING_KEY_VAR;
   const badProfile: ModelProfile = { ...profile, api_key_env: "MISSING_KEY_VAR" };
-  await expect(callReviewer(badProfile, "x", (async () => new Response("{}")) as typeof fetch)).rejects.toThrow();
+  await expect(callReviewer(badProfile, "x", (async () => new Response("{}")) as unknown as typeof fetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when the HTTP response is not ok", async () => {
   process.env.TEST_REVIEWER_KEY = "fake-key-value";
-  const fakeFetch = (async () => new Response("unauthorized", { status: 401 })) as typeof fetch;
+  const fakeFetch = (async () => new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
   await expect(callReviewer(profile, "x", fakeFetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when api_key_env is missing from profile", async () => {
   const badProfile: ModelProfile = { ...profile, api_key_env: undefined };
-  const fakeFetch = (async () => new Response("{}")) as typeof fetch;
+  const fakeFetch = (async () => new Response("{}")) as unknown as typeof fetch;
   await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when base_url is missing from profile", async () => {
   process.env.TEST_REVIEWER_KEY = "fake-key-value";
   const badProfile: ModelProfile = { ...profile, base_url: undefined };
-  const fakeFetch = (async () => new Response("{}")) as typeof fetch;
+  const fakeFetch = (async () => new Response("{}")) as unknown as typeof fetch;
   await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
 });
