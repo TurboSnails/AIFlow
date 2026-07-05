@@ -73,11 +73,16 @@ test("checks passing and AI review parse failure with strict:false falls back to
 
 test("checks passing and AI review parse failure with strict:true fails the gate after one retry", async () => {
   const runChecks = mock(async () => ({ pass: true, output: "" }));
-  const callReviewer = mock(async () => ({ not: "valid shape" }));
+  let callCount = 0;
+  const callReviewer = mock(async () => {
+    callCount++;
+    return { not: "valid shape" };
+  });
   const strictConfig: ReviewGateConfig = { ...baseConfig, ai_review: { ...baseConfig.ai_review, strict: true } };
   const outcome = await runReviewGate(strictConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
     callReviewer,
   });
+  expect(callCount).toBe(2);
   expect(outcome.aiReview).toBe("fail");
 });
