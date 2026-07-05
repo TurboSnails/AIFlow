@@ -51,7 +51,10 @@ program
   .requiredOption("--pipeline <name>", "pipeline name to run")
   .option("--once", "run exactly one iteration", false)
   .action(async (opts: { pipeline: string; once: boolean }) => {
-    console.log("run: not implemented yet", opts);
+    const { runCommand } = await import("./commands/run");
+    const state = await runCommand(process.cwd(), opts.pipeline);
+    console.log(`Stage ${state.stages[0].id}: ${state.stages[0].status}`);
+    process.exitCode = state.stages[0].status === "done" ? 0 : 1;
   });
 
 program.parseAsync(process.argv);
