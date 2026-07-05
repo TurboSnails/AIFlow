@@ -8,7 +8,27 @@ program
   .command("doctor")
   .description("Check environment: OpenCode, reviewer API key, git status")
   .action(async () => {
-    console.log("doctor: not implemented yet");
+    const { runDoctorChecks } = await import("./commands/doctor");
+    const { loadModelsConfig } = await import("./config/loader");
+    const { join } = await import("node:path");
+
+    let reviewerProfile;
+    try {
+      const config = loadModelsConfig(join(process.cwd(), ".aiflow", "config", "models.yaml"));
+      reviewerProfile = config.profiles["reviewer"];
+    } catch {
+      reviewerProfile = undefined;
+    }
+
+    const report = await runDoctorChecks(process.cwd(), reviewerProfile);
+    console.log(`OpenCode version: ${report.openCodeVersion ?? "NOT FOUND"}`);
+    console.log(`Git repo: ${report.gitOk ? "ok" : "NOT a git repository"}`);
+    console.log(`Reviewer API key present: ${report.reviewerKeyPresent}`);
+    console.log(`Reviewer reachable: ${report.reviewerReachable ?? "skipped (no key)"}`);
+    if (report.reviewerError) console.log(`Reviewer error: ${report.reviewerError}`);
+
+    const fatal = !report.openCodeVersion || !report.gitOk;
+    process.exitCode = fatal ? 1 : 0;
   });
 
 program
