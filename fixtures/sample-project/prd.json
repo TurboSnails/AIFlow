@@ -1,0 +1,17 @@
+{
+  "branchName": "feat/us-1-clamp",
+  "stories": [
+    {
+      "id": "US-1",
+      "title": "Implement clamp(value, min, max)",
+      "acceptance": [
+        "clamp returns the value unchanged when it is within [min, max]",
+        "clamp returns min when value is below min",
+        "clamp returns max when value is above max"
+      ],
+      "priority": 1,
+      "passes": false,
+      "fixCount": 0
+    }
+  ]
+}

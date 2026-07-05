@@ -1,0 +1,17 @@
+{
+  "name": "aiflow-sample-project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "eslint": "^9.9.0",
+    "vitest": "^2.0.5",
+    "typescript": "^5.5.4",
+    "@typescript-eslint/parser": "^8.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.3.0"
+  }
+}
