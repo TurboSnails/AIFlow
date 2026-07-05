@@ -2,3 +2,7 @@ node_modules/
 .aiflow/runs/
 *.log
 fixtures/sample-project/.git/
+
+# secrets — never commit
+.env
+.env.*
