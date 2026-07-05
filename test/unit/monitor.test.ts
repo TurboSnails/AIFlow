@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderStatus, readRunSnapshot, watchRun, runStatus, type RunSnapshot } from "../../src/commands/monitor";
+import { renderStatus, readRunSnapshot, watchRun, runStatus, detectStall, type RunSnapshot } from "../../src/commands/monitor";
 import type { EngineState } from "../../src/engine/state";
 import type { AiflowEvent } from "../../src/events/events";
 
@@ -87,6 +87,63 @@ describe("readRunSnapshot", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("detectStall", () => {
+  test("returns stalled=true when last event is older than the per-stage timeout", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const events: AiflowEvent[] = [
+      { ts: "2026-07-05T19:18:00.000Z", type: "story_result", story: "US-1", result: "fail" }, // 180s ago
+    ];
+    const state: EngineState = {
+      ...SAMPLE_STATE,
+      stages: [{ id: "develop", status: "running" }],
+    };
+    const out = detectStall(state, events, now, 60);
+    expect(out.develop.secondsSinceLastEvent).toBe(180);
+    expect(out.develop.stalled).toBe(true);
+  });
+
+  test("returns stalled=false when last event is within the timeout", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const events: AiflowEvent[] = [
+      { ts: "2026-07-05T19:20:50.000Z", type: "story_result", story: "US-1", result: "pass" },
+    ];
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "develop", status: "running" }] };
+    const out = detectStall(state, events, now, 60);
+    expect(out.develop.stalled).toBe(false);
+    expect(out.develop.secondsSinceLastEvent).toBe(10);
+  });
+
+  test("treats terminal stages as never stalled", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "develop", status: "done" }] };
+    const out = detectStall(state, [], now, 1);
+    expect(out.develop.stalled).toBe(false);
+  });
+
+  test("uses 'started at' as the fallback last-event time when events are empty", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "develop", status: "running" }] };
+    const out = detectStall(state, [], now, 60, new Date("2026-07-05T19:19:00.000Z"));
+    expect(out.develop.stalled).toBe(true); // 120s > 60s
+    expect(out.develop.secondsSinceLastEvent).toBe(120);
+  });
+
+  test("renders ⚠ stalled badge in stages table when stalled", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const events: AiflowEvent[] = [
+      { ts: "2026-07-05T19:19:00.000Z", type: "story_result", story: "US-1", result: "fail" }, // 120s ago
+    ];
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "develop", status: "running" }] };
+    const out = renderStatus(state, events, {
+      tail: 1,
+      now,
+      color: false,
+      stall: detectStall(state, events, now, 60),
+    });
+    expect(out).toContain("\u26a0 stalled 120s");
   });
 });
 

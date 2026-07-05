@@ -62,13 +62,15 @@ program
   .description("Render the current run snapshot (read-only)")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
   .option("--tail <n>", "show only the last N events", (v) => Number(v), 8)
+  .option("--stall-timeout <s>", "seconds since last event before a running stage is flagged stalled", (v) => Number(v), 300)
   .option("--no-color", "disable ANSI colors")
-  .action(async (opts: { runId?: string; tail: number; color: boolean }) => {
+  .action(async (opts: { runId?: string; tail: number; color: boolean; stallTimeout: number }) => {
     const { runStatus } = await import("./commands/monitor");
     const code = runStatus(process.cwd(), {
       runId: opts.runId,
       tail: opts.tail,
       color: opts.color,
+      stallTimeoutS: opts.stallTimeout,
     });
     process.exitCode = code;
   });

@@ -7,6 +7,63 @@ export interface MonitorOptions {
   tail: number;
   now: Date;
   color?: boolean;
+  stall?: StallInfo;
+}
+
+export interface StageStallInfo {
+  secondsSinceLastEvent: number | null;
+  stalled: boolean;
+}
+
+export type StallInfo = Record<string, StageStallInfo>;
+
+const TERMINAL_STATUSES = new Set<EngineState["stages"][number]["status"]>([
+  "done",
+  "failed",
+  "aborted",
+  "suspended",
+]);
+
+export function detectStall(
+  state: EngineState,
+  events: AiflowEvent[],
+  now: Date,
+  defaultTimeoutS: number,
+  fallbackStartedAt?: Date,
+): StallInfo {
+  // For each stage, find the most recent event ts that mentions it.
+  // Some events (e.g. story_result) lack an explicit stage field — when
+  // state has a single running stage we still attribute them to it.
+  const runningStageIds = state.stages.filter((s) => !TERMINAL_STATUSES.has(s.status)).map((s) => s.id);
+  const lastByStage = new Map<string, string>();
+  for (const evt of events) {
+    const explicit = "stage" in evt && evt.stage ? evt.stage : null;
+    const candidates = explicit ? [explicit] : runningStageIds;
+    for (const key of candidates) {
+      const prev = lastByStage.get(key);
+      if (!prev || new Date(evt.ts).getTime() > new Date(prev).getTime()) {
+        lastByStage.set(key, evt.ts);
+      }
+    }
+  }
+
+  const out: StallInfo = {};
+  for (const stage of state.stages) {
+    if (TERMINAL_STATUSES.has(stage.status)) {
+      out[stage.id] = { secondsSinceLastEvent: null, stalled: false };
+      continue;
+    }
+    const lastTs = lastByStage.get(stage.id);
+    const sinceMs = lastTs
+      ? now.getTime() - new Date(lastTs).getTime()
+      : fallbackStartedAt
+        ? now.getTime() - fallbackStartedAt.getTime()
+        : null;
+    const secondsSinceLastEvent = sinceMs === null ? null : Math.max(0, Math.round(sinceMs / 1000));
+    const stalled = secondsSinceLastEvent !== null && secondsSinceLastEvent > defaultTimeoutS;
+    out[stage.id] = { secondsSinceLastEvent, stalled };
+  }
+  return out;
 }
 
 export interface RunSnapshot {
@@ -117,7 +174,9 @@ export function renderStatus(state: EngineState, events: AiflowEvent[], opts: Mo
   lines.push(c("bold", color, "Stages:"));
   for (const stg of state.stages) {
     const it = stg.iteration !== undefined ? ` (iteration ${stg.iteration})` : "";
-    lines.push(`  ${stg.id.padEnd(14)} ${statusColor(stg.status, color)}${it}`);
+    const stalled = opts.stall?.[stg.id];
+    const stallSuffix = stalled?.stalled ? `  ${c("yellow", color, `\u26a0 stalled ${stalled.secondsSinceLastEvent}s`)}` : "";
+    lines.push(`  ${stg.id.padEnd(14)} ${statusColor(stg.status, color)}${it}${stallSuffix}`);
   }
   lines.push("");
   lines.push(c("bold", color, "Cost:"));
@@ -137,16 +196,18 @@ export function renderSnapshot(snap: RunSnapshot, opts: MonitorOptions): string 
   return renderStatus(snap.state, snap.events, opts);
 }
 
-export async function watchRun(cwd: string, opts: { now?: () => Date; tail: number; write?: (s: string) => void; signal?: AbortSignal; intervalMs?: number; readSnapshot?: (cwd: string) => RunSnapshot | undefined }): Promise<void> {
+export async function watchRun(cwd: string, opts: { now?: () => Date; tail: number; write?: (s: string) => void; signal?: AbortSignal; intervalMs?: number; readSnapshot?: (cwd: string) => RunSnapshot | undefined; stallTimeoutS?: number }): Promise<void> {
   const write = opts.write ?? ((s) => process.stdout.write(s));
   const nowFn = opts.now ?? (() => new Date());
   const intervalMs = opts.intervalMs ?? 1000;
   const snapshotFn = opts.readSnapshot ?? readRunSnapshot;
+  const stallTimeoutS = opts.stallTimeoutS ?? 300;
 
   function hideCursor(on: boolean) {
     write(on ? "\x1b[?25l" : "\x1b[?25h");
   }
 
+  let previousStalled = false;
   hideCursor(true);
   try {
     while (true) {
@@ -156,7 +217,16 @@ export async function watchRun(cwd: string, opts: { now?: () => Date; tail: numb
       if (!snap) {
         write(`No .aiflow/runs found in ${cwd}\n`);
       } else {
-        write(renderSnapshot(snap, { tail: opts.tail, now: nowFn(), color: true }) + "\n");
+        const now = nowFn();
+        const stall = detectStall(snap.state, snap.events, now, stallTimeoutS, snap.startedAt);
+        write(renderSnapshot(snap, { tail: opts.tail, now, color: true, stall }) + "\n");
+
+        const anyStalled = Object.values(stall).some((s) => s.stalled);
+        if (anyStalled && !previousStalled) {
+          const stuckOn = Object.entries(stall).filter(([, v]) => v.stalled).map(([k, v]) => `${k}(${v.secondsSinceLastEvent}s)`).join(", ");
+          process.stderr.write(`\n[stall warning] ${stuckOn}\n`);
+        }
+        previousStalled = anyStalled;
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, intervalMs);
@@ -172,13 +242,15 @@ export async function watchRun(cwd: string, opts: { now?: () => Date; tail: numb
   }
 }
 
-export function runStatus(cwd: string, opts: { tail: number; runId?: string; color?: boolean; now?: () => Date }): number {
+export function runStatus(cwd: string, opts: { tail: number; runId?: string; color?: boolean; now?: () => Date; stallTimeoutS?: number }): number {
   const snap = readRunSnapshot(cwd, opts.runId);
   if (!snap) {
     process.stderr.write(`No run found in ${cwd}/.aiflow/runs${opts.runId ? ` (run_id=${opts.runId})` : ""}\n`);
     return 1;
   }
-  const out = renderSnapshot(snap, { tail: opts.tail, now: (opts.now ?? (() => new Date()))(), color: opts.color ?? true });
+  const now = (opts.now ?? (() => new Date()))();
+  const stall = detectStall(snap.state, snap.events, now, opts.stallTimeoutS ?? 300, snap.startedAt);
+  const out = renderSnapshot(snap, { tail: opts.tail, now, color: opts.color ?? true, stall });
   process.stdout.write(out + "\n");
   return 0;
 }

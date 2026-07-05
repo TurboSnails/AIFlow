@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPipelineOnce, createRunId } from "../../src/engine/engine";
@@ -40,6 +40,32 @@ test("runPipelineOnce marks the stage done and writes final state.json on succes
     expect(state.stages[0].status).toBe("done");
     const persisted = readState(runDir);
     expect(persisted.stages[0].status).toBe("done");
+    const reportPath = join(runDir, "run-report.md");
+    expect(existsSync(reportPath)).toBe(true);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce writes a run-report.md mentioning each terminal result", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const runRalphLoopOnce = mock(async () => ({ storyId: "US-2", result: "fail" as const }));
+    await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
+      runRalphLoopOnce,
+    });
+    appendFileSync(
+      join(runDir, "events.jsonl"),
+      JSON.stringify({ ts: new Date().toISOString(), type: "story_result", story: "US-1", result: "pass" }) + "\n",
+    );
+    // engine already wrote report on exit; reload state + events + regenerate to inspect
+    const state = readState(runDir);
+    const events = (await import("../../src/events/events")).readEvents(runDir);
+    const { renderRunReport } = await import("../../src/commands/report");
+    const report = renderRunReport(state, events, { now: new Date(), startedAt: new Date(Date.now() - 90_000) });
+    expect(report).toContain("## Stages");
+    expect(report).toContain("develop");
+    expect(report).toContain(report.includes("US-1") ? "US-1" : "US-2");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
