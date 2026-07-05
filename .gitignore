@@ -6,3 +6,10 @@ fixtures/sample-project/.git/
 # secrets — never commit
 .env
 .env.*
+
+# local tooling artifacts
+/.claude/
+
+# human reference materials (not source) — delete these lines to commit them
+/AIFlow UI - standalone.html
+/文档设计
