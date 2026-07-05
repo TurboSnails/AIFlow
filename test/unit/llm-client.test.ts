@@ -40,3 +40,16 @@ test("callReviewer throws when the HTTP response is not ok", async () => {
   const fakeFetch = (async () => new Response("unauthorized", { status: 401 })) as typeof fetch;
   await expect(callReviewer(profile, "x", fakeFetch)).rejects.toThrow();
 });
+
+test("callReviewer throws when api_key_env is missing from profile", async () => {
+  const badProfile: ModelProfile = { ...profile, api_key_env: undefined };
+  const fakeFetch = (async () => new Response("{}")) as typeof fetch;
+  await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
+});
+
+test("callReviewer throws when base_url is missing from profile", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const badProfile: ModelProfile = { ...profile, base_url: undefined };
+  const fakeFetch = (async () => new Response("{}")) as typeof fetch;
+  await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
+});
