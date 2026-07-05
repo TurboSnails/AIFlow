@@ -48,3 +48,25 @@ test("runInit refuses to overwrite an existing .aiflow/config directory", () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("runInit is idempotent: calling it twice does not duplicate .gitignore entries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-init-test-"));
+  try {
+    // First call to runInit
+    const result1 = runInit(dir);
+    expect(result1.created).toBe(true);
+
+    // Second call to runInit on the same directory
+    const result2 = runInit(dir);
+    expect(result2.created).toBe(false);
+    expect(result2.reason).toContain("already exists");
+
+    // Verify .gitignore contains .aiflow/runs/ exactly once
+    const gitignore = readFileSync(join(dir, ".gitignore"), "utf-8");
+    const matches = gitignore.match(/\.aiflow\/runs\//g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBe(1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
