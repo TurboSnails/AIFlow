@@ -2,10 +2,10 @@ profiles:
   main-dev:
     channel: opencode
     provider: opencode
-    model: opencode/deepseek-v4-flash-free
+    model: minimax-cn-coding-plan/MiniMax-M3
   reviewer:
     channel: http
     provider: minimax
-    model: REPLACE_ME_VERIFY_VIA_DOCTOR
-    base_url: REPLACE_ME_VERIFY_VIA_DOCTOR
+    model: MiniMax-M3
+    base_url: https://api.minimaxi.com/v1
     api_key_env: MINIMAX_API_KEY

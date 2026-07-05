@@ -26,6 +26,7 @@ export async function callReviewer(
       model: profile.model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
+      thinking: { type: "disabled" },
     }),
   });
 
