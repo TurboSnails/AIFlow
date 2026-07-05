@@ -1,4 +1,4 @@
-import { writeStateAtomic, type EngineState } from "./state";
+import { writeStateAtomic, type EngineState, type StageStatus } from "./state";
 import { runRalphLoopOnce as realRunRalphLoopOnce, type RalphLoopResult } from "../runners/ralph-loop";
 import type { PipelineConfig, ModelProfile } from "../config/schema";
 
@@ -53,7 +53,12 @@ export async function runPipelineOnce(
 
   const result = await deps.runRalphLoopOnce(stage, profiles, cwd, runDir, specExcerpt);
 
-  const finalStatus = result.result === "pass" ? "done" : "failed";
+  const resultToStatus: Record<RalphLoopResult["result"], StageStatus> = {
+    pass: "done",
+    fail: "failed",
+    suspended: "suspended",
+  };
+  const finalStatus = resultToStatus[result.result];
   state = { ...state, stages: [{ id: stage.id, status: finalStatus }] };
   writeStateAtomic(runDir, state);
   return state;

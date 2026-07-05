@@ -58,6 +58,21 @@ test("runPipelineOnce marks the stage failed when the runner returns fail", asyn
   }
 });
 
+test("runPipelineOnce marks the stage suspended when the runner returns suspended", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "suspended" as const }));
+    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
+      runRalphLoopOnce,
+    });
+    expect(state.stages[0].status).toBe("suspended");
+    const persisted = readState(runDir);
+    expect(persisted.stages[0].status).toBe("suspended");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runPipelineOnce marks the stage aborted when the signal is already aborted", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {

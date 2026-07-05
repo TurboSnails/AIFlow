@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
-export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted";
+export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended";
 
 export interface StageState {
   id: string;
