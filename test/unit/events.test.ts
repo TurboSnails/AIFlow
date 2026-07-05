@@ -1,0 +1,50 @@
+import { test, expect } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendEvent, readEvents, type AiflowEvent } from "../../src/events/events";
+
+test("appendEvent then readEvents round-trips multiple events in order", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-test-"));
+  try {
+    const e1: AiflowEvent = {
+      ts: "2026-07-05T00:00:00.000Z",
+      type: "opencode_tool_use",
+      stage: "develop",
+      story: "US-1",
+      tool: "write",
+      summary: "wrote src/math.ts",
+    };
+    const e2: AiflowEvent = {
+      ts: "2026-07-05T00:00:01.000Z",
+      type: "opencode_step_finish",
+      stage: "develop",
+      in_tok: 100,
+      out_tok: 20,
+      cost_usd: 0.001,
+    };
+    const e3: AiflowEvent = {
+      ts: "2026-07-05T00:00:02.000Z",
+      type: "gate_result",
+      stage: "develop",
+      story: "US-1",
+      checks: "pass",
+      ai_review: "pass",
+      blockers: 0,
+    };
+    const e4: AiflowEvent = {
+      ts: "2026-07-05T00:00:03.000Z",
+      type: "story_result",
+      story: "US-1",
+      result: "pass",
+    };
+    appendEvent(dir, e1);
+    appendEvent(dir, e2);
+    appendEvent(dir, e3);
+    appendEvent(dir, e4);
+    const events = readEvents(dir);
+    expect(events).toEqual([e1, e2, e3, e4]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
