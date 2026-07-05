@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runChecks } from "../../src/gate/check-runner";
@@ -16,10 +16,16 @@ test("runChecks passes when all commands exit 0", async () => {
 
 test("runChecks stops at the first failing command and reports it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-checks-test-"));
+  const markerFile = join(dir, "should-not-run.marker");
   try {
-    const result = await runChecks(["echo first-ok", "false", "echo should-not-run"], dir);
+    const result = await runChecks(
+      ["echo first-ok", "false", `touch ${markerFile}`],
+      dir
+    );
     expect(result.pass).toBe(false);
     expect(result.failedCommand).toBe("false");
+    // Verify the third command never ran by checking that the marker file does not exist
+    expect(existsSync(markerFile)).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
