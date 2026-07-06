@@ -49,12 +49,21 @@ export interface RalphLoopResultAiflowEvent {
   stories_pending: number;
 }
 
+export interface BrainstormResultAiflowEvent {
+  ts: string;
+  type: "brainstorm_result";
+  stage: string;
+  result: "pass" | "fail";
+  successes: number;
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
   | GateResultAiflowEvent
   | StoryResultAiflowEvent
-  | RalphLoopResultAiflowEvent;
+  | RalphLoopResultAiflowEvent
+  | BrainstormResultAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");
