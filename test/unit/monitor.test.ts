@@ -177,6 +177,16 @@ describe("detectStall", () => {
     expect(out.develop.secondsSinceLastEvent).toBe(120);
   });
 
+  test("never flags a waiting_human stage as stalled, even with a very old last event", () => {
+    const now = new Date("2026-07-05T19:21:00.000Z");
+    const events: AiflowEvent[] = [
+      { ts: "2026-07-05T10:00:00.000Z", type: "story_result", story: "US-1", result: "fail" }, // hours ago
+    ];
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "gate", status: "waiting_human" }] };
+    const out = detectStall(state, events, now, 60);
+    expect(out.gate.stalled).toBe(false);
+  });
+
   test("renders ⚠ stalled badge in stages table when stalled", () => {
     const now = new Date("2026-07-05T19:21:00.000Z");
     const events: AiflowEvent[] = [

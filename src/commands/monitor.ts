@@ -49,7 +49,9 @@ export function detectStall(
 
   const out: StallInfo = {};
   for (const stage of state.stages) {
-    if (TERMINAL_STATUSES.has(stage.status)) {
+    // waiting_human is intentionally non-terminal (paused pending human action, not stuck),
+    // so it must never be reported as stalled alongside truly terminal statuses.
+    if (TERMINAL_STATUSES.has(stage.status) || stage.status === "waiting_human") {
       out[stage.id] = { secondsSinceLastEvent: null, stalled: false };
       continue;
     }
