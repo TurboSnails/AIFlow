@@ -54,10 +54,14 @@ MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts status
 | `aiflow init` | Scaffold a `.aiflow/config/` directory in the current project |
 | `aiflow run --pipeline <name>` | Run a pipeline (with optional `--once` to stop after one iteration) |
 | `aiflow resume` | Resume an in-flight or previously-aborted run from its `state.json` (`--run-id`, `--pipeline`, `--force`) |
+| `aiflow approve` | Approve a stage that is `waiting_human` and resume the pipeline (`--run-id`, `--stage`) |
+| `aiflow reject` | Reject a stage that is `waiting_human`, aborting the pipeline (`--run-id`, `--stage`, `--reason`) |
 | `aiflow status` | Render a one-shot read-only snapshot of the latest run |
 | `aiflow watch` | Re-render the same snapshot every second (Ctrl+C to exit) |
 
 `aiflow status` and `aiflow watch` accept `--run-id <id>`, `--tail <n>`, and (for `status`) `--stall-timeout <s>` and `--no-color`.
+
+`aiflow run` also accepts `--requirement <text>` (inline requirement text) or `--requirement-file <path>` (path to a file with the requirement text) — mutually exclusive — for pipelines whose first stage is `brainstorm` or `spec`.
 
 ---
 
@@ -84,7 +88,15 @@ profiles:
 - The **opencode** channel runs `opencode run --format json` per iteration; it relies on OpenCode's own provider registry.
 - The **http** channel hits the model's OpenAI-compatible `/chat/completions` endpoint directly. All API keys are sourced from environment variables referenced by `api_key_env` — never hard-coded.
 
-`.aiflow/config/pipelines/<name>.yaml` declares the stages. The bundled `ralph-only` pipeline is a one-stage loop suitable for dev iteration; richer pipelines (`full-auto`, `spec-only`) are planned for v1.1.
+`.aiflow/config/pipelines/<name>.yaml` declares the stages. The bundled `ralph-only` pipeline is a one-stage loop suitable for dev iteration; a pipeline can now declare any ordered combination of the following stage types:
+
+- `brainstorm` — fans a requirement out to multiple models (`independent` or `debate` mode) and synthesizes a report
+- `spec` — turns a requirement/brainstorm report into a `spec.md` with verifiable acceptance criteria
+- `plan` — turns a spec into `prd.json` (the story backlog `ralph_loop` consumes)
+- `human_gate` — pauses the pipeline in `waiting_human` until `aiflow approve`/`aiflow reject` is run, or `timeout` elapses
+- `ralph_loop` — the implement/gate/commit loop described below
+
+A `full-auto` pipeline (`brainstorm → spec → confirm-spec(human_gate) → plan → develop(ralph_loop)`) is a typical composition of these.
 
 A `ralph_loop` stage keeps selecting the highest-priority pending story from `prd.json` and retrying until every story is done or suspended, until `max_iterations` (default 10) is reached, or until `stall_limit` (default 3) consecutive iterations make no progress. A story that fails more than `per_story_fix_limit` (default 3) times is marked `suspended` in `prd.json` and skipped in favor of the next pending story — it does not stop the whole stage. When a stage stops without finishing every story, `state.json`'s `stages[i].reason` (and the corresponding `ralph_loop_result` event in `events.jsonl`) records why: `"max_iterations"`, `"stall"`, or `"stories_suspended"`.
 
@@ -139,14 +151,14 @@ The full suite (≈85 tests) covers:
 src/
 ├── adapters/         # OpenCode subprocess + JSONL event parser
 ├── cli.ts            # commander entry point
-├── commands/         # doctor / init / run / monitor / report
+├── commands/         # doctor / init / run / resume / approve / reject / monitor / report
 ├── config/           # zod schemas + YAML loader
-├── engine/           # pipeline state machine (single-stage for the slice)
+├── engine/           # pipeline state machine (multi-stage: brainstorm/spec/plan/human_gate/ralph_loop)
 ├── events/           # events.jsonl read/append
 ├── gate/             # check-runner + review-gate + LLM client
 ├── git.ts            # thin rev-parse / stageAll / diffCached / commit helpers
 ├── prd.ts            # prd.json read/write + story state machines
-├── runners/          # ralph_loop stage runner
+├── runners/          # stage runners: ralph-loop.ts, brainstorm.ts, spec.ts, plan.ts, human-gate.ts
 └── llm/              # direct-HTTP LLM client for the reviewer channel
 
 test/
@@ -158,12 +170,11 @@ test/
 
 ## Status
 
-This is the first vertical slice (Tasks 1–18 of the implementation plan in `docs/superpowers/plans/2026-07-05-aiflow-cli-ralph-slice-plan.md`). It covers:
+The first vertical slice (Tasks 1–18 of the implementation plan in `docs/superpowers/plans/2026-07-05-aiflow-cli-ralph-slice-plan.md`) shipped `ralph-only` end-to-end: real event stream ingestion, deterministic + AI review gate, git commit, monitor, and report, against a real OpenCode agent and a real reviewer API.
 
-- `ralph-only` pipeline end-to-end against a real OpenCode agent and a real reviewer API.
-- Real event stream ingestion, deterministic + AI review gate, git commit, monitor, and report.
+A subsequent plan (`docs/superpowers/specs/2026-07-06-multi-stage-pipeline-runners-design.md`) added multi-stage pipeline support: the `brainstorm`, `spec`, `plan`, and `human_gate` stage types, `aiflow approve`/`aiflow reject`, and `run --requirement`/`--requirement-file`. Pipelines can now compose any ordered mix of these stage types alongside `ralph_loop`, and `aiflow resume` picks up an in-flight or aborted run from any stage.
 
-Everything in the design spec outside that scope (multi-stage pipelines, brainstorm, human_gate, resume, full e2e with brainstorm) is **not yet implemented** — see `docs/superpowers/` for the full roadmap.
+Not yet implemented: budget tracking/auto-pause on `budget.max_cost_usd`, re-running a prior stage after a `human_gate` rejection (reject currently just aborts the pipeline), and `doctor` connectivity checks for the newer profile/stage types — see `docs/superpowers/` for the full roadmap.
 
 ---
 
