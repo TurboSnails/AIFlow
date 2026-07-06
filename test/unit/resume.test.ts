@@ -60,7 +60,14 @@ describe("runResume", () => {
       );
 
       // minimal .aiflow/config/pipelines/ralph-only.yaml — we already have ralph-only.yaml in fixture
-      const result = await runResume(cwd, { runId });
+      // Mock runRalphLoop so this stays a hermetic unit test — no real OpenCode/LLM call.
+      const result = await runResume(cwd, { runId }, {
+        runRalphLoop: async () => ({
+          result: "pass",
+          iterations: 1,
+          usage: { inTok: 0, outTok: 0, costUsd: 0 },
+        }),
+      });
       expect(result.status).toBe("resumed");
       expect(existsSync(join(runDir, "state.json"))).toBe(true);
       const persisted = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));

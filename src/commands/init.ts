@@ -10,7 +10,7 @@ const MODELS_YAML_TEMPLATE = `profiles:
   main-dev:
     channel: opencode
     provider: opencode
-    model: opencode/deepseek-v4-flash-free
+    model: deepseek-v4-flash-free
   reviewer:
     channel: http
     provider: minimax

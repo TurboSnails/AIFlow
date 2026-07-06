@@ -1,8 +1,8 @@
 profiles:
   main-dev:
     channel: opencode
-    provider: opencode
-    model: minimax-cn-coding-plan/MiniMax-M3
+    provider: minimax-cn
+    model: MiniMax-M3
   reviewer:
     channel: http
     provider: minimax

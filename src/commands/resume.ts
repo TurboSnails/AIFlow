@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import type { ModelProfile } from "../config/schema";
-import { isTerminalStatus, runPipelineOnce } from "../engine/engine";
+import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/engine";
 import type { EngineState } from "../engine/state";
 
 export interface ResumeResult {
@@ -21,7 +21,11 @@ function pickLatestRun(cwd: string): string | undefined {
   return entries[0];
 }
 
-export async function runResume(cwd: string, opts: { runId?: string; pipeline?: string; force?: boolean }): Promise<ResumeResult> {
+export async function runResume(
+  cwd: string,
+  opts: { runId?: string; pipeline?: string; force?: boolean },
+  deps?: EngineDeps
+): Promise<ResumeResult> {
   const runId = opts.runId ?? pickLatestRun(cwd);
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
   const runDir = join(cwd, ".aiflow", "runs", runId);
@@ -43,7 +47,7 @@ export async function runResume(cwd: string, opts: { runId?: string; pipeline?: 
     cwd,
     runDir,
     "",
-    undefined,
+    deps,
     undefined,
     { resume: true, force: opts.force ?? false },
   );
