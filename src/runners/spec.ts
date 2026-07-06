@@ -12,11 +12,11 @@ export interface SpecDeps {
 
 const defaultDeps: SpecDeps = { runAgentTask: realRunAgentTask };
 
-function renderSpecPrompt(input: string): string {
+function renderSpecPrompt(input: string, output: string): string {
   return [
-    "Write a spec.md file for the following input, in an existing codebase.",
+    `Write a ${output} file for the following input, in an existing codebase.`,
     "The spec must include clear, verifiable acceptance criteria for a later implementation stage.",
-    "Write the file directly to the project root as spec.md. Do not ask for confirmation.",
+    `Write the file directly to the project root as ${output}. Do not ask for confirmation.`,
     "",
     "## Input",
     input,
@@ -46,7 +46,7 @@ export async function runSpecStage(
   const profile = profiles[stageConfig.model];
   const agentResult = await deps.runAgentTask({
     profile,
-    prompt: renderSpecPrompt(input),
+    prompt: renderSpecPrompt(input, stageConfig.output),
     cwd,
     timeoutMs: 10 * 60 * 1000,
     runDir,

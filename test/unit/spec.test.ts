@@ -46,6 +46,30 @@ test("agent succeeds but spec.md was never written: result is fail", async () =>
   }
 });
 
+test("agent writes a non-default output filename: result is pass", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-test-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-test-run-"));
+  try {
+    const customStageConfig: SpecStageConfig = { id: "spec", type: "spec", model: "main-dev", output: "design.md" };
+    // Deliberately do NOT write spec.md — only the configured output file.
+    writeFileSync(join(cwd, "design.md"), "# Design\nwritten by the agent");
+    const runAgentTask = mock(async (task: { prompt: string }) => {
+      expect(task.prompt).toContain("design.md");
+      expect(task.prompt).not.toContain("spec.md");
+      return { ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } };
+    });
+
+    const outcome = await runSpecStage(customStageConfig, pendingStageState, profiles, cwd, runDir, () => new Date(), undefined, {
+      runAgentTask,
+    });
+
+    expect(outcome.result).toBe("pass");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("agent call itself fails: result is fail", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-test-cwd-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-test-run-"));
