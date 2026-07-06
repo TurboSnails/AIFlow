@@ -46,7 +46,6 @@ export async function runResume(
     profiles,
     cwd,
     runDir,
-    "",
     deps,
     undefined,
     { resume: true, force: opts.force ?? false },

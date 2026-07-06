@@ -1,25 +1,59 @@
-import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus } from "./state";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus, type StageStopReason } from "./state";
 import { readEvents } from "../events/events";
-import { runRalphLoop as realRunRalphLoop, type RalphLoopSummary } from "../runners/ralph-loop";
+import { runRalphLoop as realRunRalphLoop } from "../runners/ralph-loop";
 import { writeRunReport } from "../commands/report";
-import type { PipelineConfig, ModelProfile, StageConfig } from "../config/schema";
+import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
+
+export interface StageOutcome {
+  result: "pass" | "fail" | "suspended" | "aborted" | "waiting_human";
+  reason?: string;
+  usage?: { inTok: number; outTok: number; costUsd: number };
+  entered_at?: string;
+}
+
+export type StageRunnerFn = (
+  stageConfig: StageConfig,
+  stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  nowFn: () => Date,
+  signal?: AbortSignal
+) => Promise<StageOutcome>;
 
 export interface EngineDeps {
-  runRalphLoop: (
-    stageConfig: StageConfig,
-    profiles: Record<string, ModelProfile>,
-    cwd: string,
-    runDir: string,
-    specExcerpt: string,
-    signal?: AbortSignal
-  ) => Promise<RalphLoopSummary>;
+  runners: Partial<Record<StageConfig["type"], StageRunnerFn>>;
   nowFn?: () => Date;
   writeRunReport?: (runDir: string, state: EngineState, now: Date, startedAt: Date) => void;
 }
 
+async function adaptRalphLoop(
+  stageConfig: StageConfig,
+  _stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  _nowFn: () => Date,
+  signal?: AbortSignal
+): Promise<StageOutcome> {
+  const specPath = join(cwd, "spec.md");
+  const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
+  const summary = await realRunRalphLoop(
+    stageConfig as RalphLoopStageConfig,
+    profiles,
+    cwd,
+    runDir,
+    specExcerpt,
+    undefined,
+    signal
+  );
+  return { result: summary.result, reason: summary.reason, usage: summary.usage };
+}
+
 const defaultDeps: EngineDeps = {
-  runRalphLoop: (stageConfig, profiles, cwd, runDir, specExcerpt, signal) =>
-    realRunRalphLoop(stageConfig, profiles, cwd, runDir, specExcerpt, undefined, signal),
+  runners: { ralph_loop: adaptRalphLoop },
   nowFn: () => new Date(),
   writeRunReport: (runDir, state, now, startedAt) => {
     const events = readEvents(runDir);
@@ -51,21 +85,36 @@ interface StageExecutionResult {
   usage?: { inTok: number; outTok: number; costUsd: number };
 }
 
+const STATUS_MAP: Record<StageOutcome["result"], StageStatus> = {
+  pass: "done",
+  fail: "failed",
+  suspended: "suspended",
+  aborted: "aborted",
+  waiting_human: "waiting_human",
+};
+
 async function executeStage(
   stage: StageConfig,
+  stageState: StageState,
   profiles: Record<string, ModelProfile>,
   cwd: string,
   runDir: string,
-  specExcerpt: string,
+  nowFn: () => Date,
   deps: EngineDeps,
   signal: AbortSignal | undefined,
 ): Promise<StageExecutionResult> {
   if (signal?.aborted) return { state: { id: stage.id, status: "aborted" } };
 
-  const result = await deps.runRalphLoop(stage, profiles, cwd, runDir, specExcerpt, signal);
-  const status: StageStatus =
-    result.result === "pass" ? "done" : result.result === "aborted" ? "aborted" : "suspended";
-  return { state: { id: stage.id, status, reason: result.reason }, usage: result.usage };
+  const runner = deps.runners[stage.type];
+  if (!runner) throw new Error(`No runner registered for stage type "${stage.type}"`);
+
+  const outcome = await runner(stage, stageState, profiles, cwd, runDir, nowFn, signal);
+  const status = STATUS_MAP[outcome.result];
+  const entered_at = outcome.entered_at ?? stageState.entered_at;
+  return {
+    state: { id: stage.id, status, reason: outcome.reason as StageStopReason | undefined, entered_at },
+    usage: outcome.usage,
+  };
 }
 
 export interface RunPipelineOptions {
@@ -74,18 +123,22 @@ export interface RunPipelineOptions {
   /** Force re-execution of terminal stages (mutates state.status="pending" before running). */
   force?: boolean;
   now?: Date;
+  /** Requirement text for pipelines with a brainstorm/spec stage; stored on the initial state only. */
+  requirement?: string;
 }
 
 /**
- * Run a multi-stage pipeline sequentially; for the v1 slice we keep each
- * stage independent (no shared iteration budget across stages).
+ * Run a multi-stage pipeline sequentially; each stage's own runner (looked up
+ * by `stage.type` in `deps.runners`) is responsible for reading whatever
+ * input files it needs directly from `cwd` — the engine passes no in-memory
+ * context object between stages (everything crosses stage boundaries via
+ * files, per the project's file-driven design principle).
  */
 export async function runPipelineOnce(
   pipeline: PipelineConfig,
   profiles: Record<string, ModelProfile>,
   cwd: string,
   runDir: string,
-  specExcerpt: string,
   deps: EngineDeps = defaultDeps,
   signal?: AbortSignal,
   opts: RunPipelineOptions = {}
@@ -102,6 +155,7 @@ export async function runPipelineOnce(
     state = {
       run_id: runDir.split("/").pop() ?? "unknown",
       pipeline: pipeline.name,
+      requirement: opts.requirement,
       stages: pipeline.stages.map((s) => ({ id: s.id, status: "pending" as StageStatus })),
       cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
     };
@@ -146,7 +200,7 @@ export async function runPipelineOnce(
     state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "running" } : s)) };
     writeStateAtomic(runDir, state);
 
-    const execResult = await executeStage(stage, profiles, cwd, runDir, specExcerpt, effectiveDeps, signal);
+    const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal);
     state = {
       ...state,
       stages: state.stages.map((s, idx) => (idx === i ? execResult.state : s)),
@@ -160,7 +214,7 @@ export async function runPipelineOnce(
     };
     writeStateAtomic(runDir, state);
 
-    // any non-"done" outcome short-circuits the rest of the pipeline
+    // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
     if (execResult.state.status !== "done") {
       break;
     }

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
-import { createRunId, runPipelineOnce } from "../engine/engine";
+import { createRunId, runPipelineOnce, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate } from "../gate/review-gate";
@@ -9,7 +9,7 @@ import { runChecks } from "../gate/check-runner";
 import { callReviewer as realCallReviewer } from "../llm/client";
 import { revParseHead, stageAll, diffCached, commit } from "../git";
 import type { EngineState } from "../engine/state";
-import type { ModelProfile, StageConfig } from "../config/schema";
+import type { ModelProfile, RalphLoopStageConfig } from "../config/schema";
 
 export interface RunCommandOverrides {
   runAgentTask?: (task: AgentTask) => Promise<AgentResult>;
@@ -28,39 +28,35 @@ export async function runCommand(
   const runDir = join(cwd, ".aiflow", "runs", runId);
   mkdirSync(runDir, { recursive: true });
 
-  const specPath = join(cwd, "spec.md");
-  const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
-
   const runAgentTask = overrides.runAgentTask ?? realRunAgentTask;
   const reviewerCallFn = overrides.callReviewer ?? realCallReviewer;
 
-  const engineDeps = {
-    runRalphLoop: (
-      stageConfig: Extract<StageConfig, { type: "ralph_loop" }>,
-      profiles: Record<string, ModelProfile>,
-      runCwd: string,
-      stageRunDir: string,
-      spec: string,
-      signal?: AbortSignal
-    ) =>
-      runRalphLoop(
-        stageConfig,
-        profiles,
-        runCwd,
-        stageRunDir,
-        spec,
-        {
-          runAgentTask,
-          runReviewGate: (config, reviewerProfile, gateCwd, diff, acceptance) =>
-            realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
-              runChecks,
-              callReviewer: reviewerCallFn,
-            }),
-          git: { revParseHead, stageAll, diffCached, commit },
-        },
-        signal
-      ),
+  const engineDeps: EngineDeps = {
+    runners: {
+      ralph_loop: async (stageConfig, _stageState, profiles, runCwd, stageRunDir, _nowFn, signal): Promise<StageOutcome> => {
+        const specPath = join(runCwd, "spec.md");
+        const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
+        const summary = await runRalphLoop(
+          stageConfig as RalphLoopStageConfig,
+          profiles,
+          runCwd,
+          stageRunDir,
+          specExcerpt,
+          {
+            runAgentTask,
+            runReviewGate: (config, reviewerProfile, gateCwd, diff, acceptance) =>
+              realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
+                runChecks,
+                callReviewer: reviewerCallFn,
+              }),
+            git: { revParseHead, stageAll, diffCached, commit },
+          },
+          signal
+        );
+        return { result: summary.result, reason: summary.reason, usage: summary.usage };
+      },
+    },
   };
 
-  return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, specExcerpt, engineDeps);
+  return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, engineDeps);
 }
