@@ -53,6 +53,26 @@ describe("renderStatus", () => {
     expect(out).toContain("(0 of 0)");
     expect(out).toContain("(none)");
   });
+
+  test("renders a ralph_loop_result event with its reason and story counts", () => {
+    const events: AiflowEvent[] = [
+      {
+        ts: "2026-07-05T19:20:08.000Z",
+        type: "ralph_loop_result",
+        stage: "develop",
+        result: "suspended",
+        reason: "stall",
+        iterations: 3,
+        stories_done: 0,
+        stories_suspended: 0,
+        stories_pending: 1,
+      },
+    ];
+    const out = renderStatus(SAMPLE_STATE, events, { tail: 8, now: new Date("2026-07-05T19:21:00.000Z"), color: false });
+    expect(out).toContain("stall");
+    expect(out).toContain("iterations=3");
+    expect(out).toContain("done=0 suspended=0 pending=1");
+  });
 });
 
 describe("readRunSnapshot", () => {

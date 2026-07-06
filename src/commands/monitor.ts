@@ -161,6 +161,12 @@ function describeEvent(evt: AiflowEvent, color: boolean, now: Date): string {
         evt.result === "pass" ? c("green", color, "PASS") : evt.result === "fail" ? c("red", color, "FAIL") : c("yellow", color, "SUSPEND");
       return `${formatTime(evt.ts, now)}  ${c("blue", color, "story")}    ${evt.story}  ${tag}`;
     }
+    case "ralph_loop_result": {
+      const tag =
+        evt.result === "pass" ? c("green", color, "PASS") : evt.result === "aborted" ? c("gray", color, "ABORT") : c("yellow", color, "SUSPEND");
+      const reasonSuffix = evt.reason ? ` ${evt.reason}` : "";
+      return `${formatTime(evt.ts, now)}  ${c("blue", color, "loop")}     ${evt.stage}  ${tag}${reasonSuffix}  iterations=${evt.iterations} done=${evt.stories_done} suspended=${evt.stories_suspended} pending=${evt.stories_pending}`;
+    }
   }
 }
 
