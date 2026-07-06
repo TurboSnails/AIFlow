@@ -55,3 +55,21 @@ test("writeStateAtomic then readState round-trips a stage with a reason", () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("writeStateAtomic then readState round-trips a waiting_human stage with entered_at", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-state-test-"));
+  try {
+    const state: EngineState = {
+      run_id: "r1",
+      pipeline: "full-auto",
+      requirement: "add offline cache",
+      stages: [{ id: "confirm-spec", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    };
+    writeStateAtomic(dir, state);
+    const loaded = readState(dir);
+    expect(loaded).toEqual(state);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

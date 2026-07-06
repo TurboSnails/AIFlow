@@ -99,6 +99,7 @@ function statusColor(status: EngineState["stages"][number]["status"], on: boolea
     failed: "red",
     aborted: "yellow",
     suspended: "yellow",
+    waiting_human: "yellow",
   };
   return c(map[status], on, status);
 }

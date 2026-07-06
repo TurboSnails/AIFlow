@@ -1,20 +1,23 @@
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
-export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended";
+export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended" | "waiting_human";
 
 export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended";
+export type StageStopReason = RalphLoopStopReason | "human_gate_timeout" | "human_gate_rejected";
 
 export interface StageState {
   id: string;
   status: StageStatus;
   iteration?: number;
-  reason?: RalphLoopStopReason;
+  reason?: StageStopReason;
+  entered_at?: string;
 }
 
 export interface EngineState {
   run_id: string;
   pipeline: string;
+  requirement?: string;
   stages: StageState[];
   cost: { input_tokens: number; output_tokens: number; est_usd: number };
 }
