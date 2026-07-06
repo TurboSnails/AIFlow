@@ -57,13 +57,21 @@ export interface BrainstormResultAiflowEvent {
   successes: number;
 }
 
+export interface SpecResultAiflowEvent {
+  ts: string;
+  type: "spec_result";
+  stage: string;
+  result: "pass" | "fail";
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
   | GateResultAiflowEvent
   | StoryResultAiflowEvent
   | RalphLoopResultAiflowEvent
-  | BrainstormResultAiflowEvent;
+  | BrainstormResultAiflowEvent
+  | SpecResultAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");
