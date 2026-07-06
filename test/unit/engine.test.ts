@@ -36,9 +36,9 @@ test("createRunId returns a non-empty, filesystem-safe string", () => {
 test("runPipelineOnce marks the stage done and writes final state.json on success", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {
-    const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 1, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
     const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
-      runRalphLoopOnce,
+      runRalphLoop,
     });
     expect(state.stages[0].status).toBe("done");
     const persisted = readState(runDir);
@@ -53,35 +53,26 @@ test("runPipelineOnce marks the stage done and writes final state.json on succes
 test("runPipelineOnce writes a run-report.md mentioning each terminal result", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {
-    const runRalphLoopOnce = mock(async () => ({ storyId: "US-2", result: "fail" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const runRalphLoop = mock(async () => ({
+      result: "suspended" as const,
+      reason: "stories_suspended" as const,
+      iterations: 1,
+      usage: { inTok: 0, outTok: 0, costUsd: 0 },
+    }));
     await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
-      runRalphLoopOnce,
+      runRalphLoop,
     });
     appendFileSync(
       join(runDir, "events.jsonl"),
-      JSON.stringify({ ts: new Date().toISOString(), type: "story_result", story: "US-1", result: "pass" }) + "\n",
+      JSON.stringify({ ts: new Date().toISOString(), type: "story_result", story: "US-1", result: "suspended" }) + "\n",
     );
-    // engine already wrote report on exit; reload state + events + regenerate to inspect
     const state = readState(runDir);
     const events = (await import("../../src/events/events")).readEvents(runDir);
     const { renderRunReport } = await import("../../src/commands/report");
     const report = renderRunReport(state, events, { now: new Date(), startedAt: new Date(Date.now() - 90_000) });
     expect(report).toContain("## Stages");
     expect(report).toContain("develop");
-    expect(report).toContain(report.includes("US-1") ? "US-1" : "US-2");
-  } finally {
-    rmSync(runDir, { recursive: true, force: true });
-  }
-});
-
-test("runPipelineOnce marks the stage failed when the runner returns fail", async () => {
-  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
-  try {
-    const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "fail" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
-    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
-      runRalphLoopOnce,
-    });
-    expect(state.stages[0].status).toBe("failed");
+    expect(report).toContain("US-1");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
@@ -90,9 +81,14 @@ test("runPipelineOnce marks the stage failed when the runner returns fail", asyn
 test("runPipelineOnce marks the stage suspended when the runner returns suspended", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {
-    const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "suspended" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const runRalphLoop = mock(async () => ({
+      result: "suspended" as const,
+      reason: "max_iterations" as const,
+      iterations: 10,
+      usage: { inTok: 0, outTok: 0, costUsd: 0 },
+    }));
     const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
-      runRalphLoopOnce,
+      runRalphLoop,
     });
     expect(state.stages[0].status).toBe("suspended");
     const persisted = readState(runDir);
@@ -102,16 +98,36 @@ test("runPipelineOnce marks the stage suspended when the runner returns suspende
   }
 });
 
+test("runPipelineOnce passes the runner's reason through onto state.stages[i].reason", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const runRalphLoop = mock(async () => ({
+      result: "suspended" as const,
+      reason: "stall" as const,
+      iterations: 4,
+      usage: { inTok: 0, outTok: 0, costUsd: 0 },
+    }));
+    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
+      runRalphLoop,
+    });
+    expect(state.stages[0].reason).toBe("stall");
+    const persisted = readState(runDir);
+    expect(persisted.stages[0].reason).toBe("stall");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runPipelineOnce aggregates the runner's usage into state.cost", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {
-    const runRalphLoopOnce = mock(async () => ({
-      storyId: "US-1",
+    const runRalphLoop = mock(async () => ({
       result: "pass" as const,
+      iterations: 3,
       usage: { inTok: 123, outTok: 45, costUsd: 0.0067 },
     }));
     const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, "spec", {
-      runRalphLoopOnce,
+      runRalphLoop,
     });
     expect(state.cost).toEqual({ input_tokens: 123, output_tokens: 45, est_usd: 0.0067 });
     const persisted = readState(runDir);
@@ -152,18 +168,18 @@ test("runPipelineOnce marks the stage aborted when the signal is already aborted
   try {
     const controller = new AbortController();
     controller.abort();
-    const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 0, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
     const state = await runPipelineOnce(
       pipeline,
       profiles,
       "/tmp/does-not-matter",
       runDir,
       "spec",
-      { runRalphLoopOnce },
+      { runRalphLoop },
       controller.signal
     );
     expect(state.stages[0].status).toBe("aborted");
-    expect(runRalphLoopOnce).not.toHaveBeenCalled();
+    expect(runRalphLoop).not.toHaveBeenCalled();
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
@@ -173,7 +189,6 @@ describe("runPipelineOnce resume", () => {
   test("resume re-runs a pending stage by reading the existing state.json", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-resume-"));
     try {
-      // seed state.json as if a previous run had been interrupted
       writeFileSync(
         join(runDir, "state.json"),
         JSON.stringify({
@@ -183,19 +198,19 @@ describe("runPipelineOnce resume", () => {
           cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
         }),
       );
-      const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+      const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 1, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
       const state = await runPipelineOnce(
         pipeline,
         profiles,
         "/tmp/does-not-matter",
         runDir,
         "spec",
-        { runRalphLoopOnce, nowFn: () => new Date("2026-07-05T20:00:00.000Z") },
+        { runRalphLoop, nowFn: () => new Date("2026-07-05T20:00:00.000Z") },
         undefined,
         { resume: true, now: new Date("2026-07-05T20:00:00.000Z") },
       );
       expect(state.stages[0].status).toBe("done");
-      expect(runRalphLoopOnce).toHaveBeenCalledTimes(1);
+      expect(runRalphLoop).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(runDir, { recursive: true, force: true });
     }
@@ -213,19 +228,19 @@ describe("runPipelineOnce resume", () => {
           cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
         }),
       );
-      const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+      const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 1, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
       const state = await runPipelineOnce(
         pipeline,
         profiles,
         "/tmp/does-not-matter",
         runDir,
         "spec",
-        { runRalphLoopOnce, nowFn: () => new Date() },
+        { runRalphLoop, nowFn: () => new Date() },
         undefined,
         { resume: true },
       );
       expect(state.stages[0].status).toBe("failed");
-      expect(runRalphLoopOnce).not.toHaveBeenCalled();
+      expect(runRalphLoop).not.toHaveBeenCalled();
     } finally {
       rmSync(runDir, { recursive: true, force: true });
     }
@@ -243,19 +258,19 @@ describe("runPipelineOnce resume", () => {
           cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
         }),
       );
-      const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+      const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 1, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
       const state = await runPipelineOnce(
         pipeline,
         profiles,
         "/tmp/does-not-matter",
         runDir,
         "spec",
-        { runRalphLoopOnce, nowFn: () => new Date() },
+        { runRalphLoop, nowFn: () => new Date() },
         undefined,
         { resume: true, force: true },
       );
       expect(state.stages[0].status).toBe("done");
-      expect(runRalphLoopOnce).toHaveBeenCalledTimes(1);
+      expect(runRalphLoop).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(runDir, { recursive: true, force: true });
     }
@@ -264,7 +279,7 @@ describe("runPipelineOnce resume", () => {
   test("resume surfaces a clear error when state.json does not exist", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-resume-empty-"));
     try {
-      const runRalphLoopOnce = mock(async () => ({ storyId: "US-1", result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+      const runRalphLoop = mock(async () => ({ result: "pass" as const, iterations: 1, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
       await expect(
         runPipelineOnce(
           pipeline,
@@ -272,7 +287,7 @@ describe("runPipelineOnce resume", () => {
           "/tmp/does-not-matter",
           runDir,
           "spec",
-          { runRalphLoopOnce },
+          { runRalphLoop },
           undefined,
           { resume: true },
         ),

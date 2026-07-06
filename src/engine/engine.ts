@@ -1,24 +1,25 @@
 import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus } from "./state";
 import { readEvents } from "../events/events";
-import { runRalphLoopOnce as realRunRalphLoopOnce, type RalphLoopResult } from "../runners/ralph-loop";
+import { runRalphLoop as realRunRalphLoop, type RalphLoopSummary } from "../runners/ralph-loop";
 import { writeRunReport } from "../commands/report";
 import type { PipelineConfig, ModelProfile, StageConfig } from "../config/schema";
 
 export interface EngineDeps {
-  runRalphLoopOnce: (
+  runRalphLoop: (
     stageConfig: StageConfig,
     profiles: Record<string, ModelProfile>,
     cwd: string,
     runDir: string,
-    specExcerpt: string
-  ) => Promise<RalphLoopResult>;
+    specExcerpt: string,
+    signal?: AbortSignal
+  ) => Promise<RalphLoopSummary>;
   nowFn?: () => Date;
   writeRunReport?: (runDir: string, state: EngineState, now: Date, startedAt: Date) => void;
 }
 
 const defaultDeps: EngineDeps = {
-  runRalphLoopOnce: (stageConfig, profiles, cwd, runDir, specExcerpt) =>
-    realRunRalphLoopOnce(stageConfig, profiles, cwd, runDir, specExcerpt),
+  runRalphLoop: (stageConfig, profiles, cwd, runDir, specExcerpt, signal) =>
+    realRunRalphLoop(stageConfig, profiles, cwd, runDir, specExcerpt, undefined, signal),
   nowFn: () => new Date(),
   writeRunReport: (runDir, state, now, startedAt) => {
     const events = readEvents(runDir);
@@ -61,9 +62,10 @@ async function executeStage(
 ): Promise<StageExecutionResult> {
   if (signal?.aborted) return { state: { id: stage.id, status: "aborted" } };
 
-  const result = await deps.runRalphLoopOnce(stage, profiles, cwd, runDir, specExcerpt);
-  const status: StageStatus = result.result === "pass" ? "done" : result.result === "suspended" ? "suspended" : "failed";
-  return { state: { id: stage.id, status }, usage: result.usage };
+  const result = await deps.runRalphLoop(stage, profiles, cwd, runDir, specExcerpt, signal);
+  const status: StageStatus =
+    result.result === "pass" ? "done" : result.result === "aborted" ? "aborted" : "suspended";
+  return { state: { id: stage.id, status, reason: result.reason }, usage: result.usage };
 }
 
 export interface RunPipelineOptions {
