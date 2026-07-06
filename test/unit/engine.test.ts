@@ -156,6 +156,28 @@ test("runPipelineOnce throws a clear error for a stage type with no registered r
   }
 });
 
+test("runPipelineOnce's dependency merge does not let overriding one runner wipe out another type's default (ralph_loop stays registered)", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-engine-test-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    writeFileSync(join(cwd, "prd.json"), JSON.stringify({ branchName: "x", stories: [] }));
+    // Override a completely unrelated stage type — must NOT affect ralph_loop's default runner.
+    // Under the old flat-spread bug, this wipes out defaultDeps.runners.ralph_loop entirely,
+    // and the ralph_loop stage below would fail with "No runner registered for stage type ralph_loop".
+    const unrelatedOverride = mock(async () => ({ result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const state = await runPipelineOnce(pipeline, profiles, cwd, runDir, {
+      runners: { brainstorm: unrelatedOverride },
+    });
+    // With an empty prd.json (no pending stories), the real default ralph_loop runner
+    // (adaptRalphLoop -> runRalphLoop) returns "pass" immediately with zero agent/git calls.
+    expect(state.stages[0].status).toBe("done");
+    expect(unrelatedOverride).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runPipelineOnce drops an unrecognized reason string rather than passing it through unchecked", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {
