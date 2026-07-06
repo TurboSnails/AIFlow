@@ -133,24 +133,25 @@ test("runPipelineOnce aggregates the runner's usage into state.cost", async () =
 
 test("runPipelineOnce throws a clear error for a stage type with no registered runner", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
-  const brainstormPipeline: PipelineConfig = {
-    name: "has-brainstorm",
+  // As of Task 10, engine.ts's defaultDeps registers a real adapter for every
+  // known StageConfig["type"] (ralph_loop/brainstorm/spec/plan/human_gate), so
+  // this test can no longer use one of those to exercise the "no runner
+  // registered" throw. It uses a stage type outside the discriminated union
+  // instead, to prove executeStage's defensive check still fires for a truly
+  // unregistered type (e.g. a future stage type added without a default).
+  const unknownTypePipeline: PipelineConfig = {
+    name: "has-unknown-type",
     stages: [
       {
-        id: "ideate",
-        type: "brainstorm",
-        models: ["main-dev", "reviewer"],
-        mode: "independent",
-        debate_rounds: 2,
-        synthesizer: "main-dev",
-        output: "brainstorm-report.md",
-      },
+        id: "mystery",
+        type: "totally_unregistered_stage_type",
+      } as unknown as PipelineConfig["stages"][number],
     ],
   };
   try {
     await expect(
-      runPipelineOnce(brainstormPipeline, profiles, "/tmp/does-not-matter", runDir, { runners: {} })
-    ).rejects.toThrow(/No runner registered for stage type "brainstorm"/);
+      runPipelineOnce(unknownTypePipeline, profiles, "/tmp/does-not-matter", runDir, { runners: {} })
+    ).rejects.toThrow(/No runner registered for stage type "totally_unregistered_stage_type"/);
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

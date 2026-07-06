@@ -50,13 +50,28 @@ program
   .description("Run a pipeline")
   .requiredOption("--pipeline <name>", "pipeline name to run")
   .option("--once", "run exactly one iteration", false)
-  .action(async (opts: { pipeline: string; once: boolean }) => {
+  .option("--requirement <text>", "requirement text for pipelines with a brainstorm/spec stage")
+  .option("--requirement-file <path>", "path to a file containing the requirement text")
+  .action(async (opts: { pipeline: string; once: boolean; requirement?: string; requirementFile?: string }) => {
+    if (opts.requirement && opts.requirementFile) {
+      console.error("--requirement and --requirement-file are mutually exclusive");
+      process.exitCode = 1;
+      return;
+    }
     const { runCommand } = await import("./commands/run");
     const { summarizePipelineOutcome } = await import("./engine/engine");
-    const state = await runCommand(process.cwd(), opts.pipeline);
-    const outcome = summarizePipelineOutcome(state);
-    console.log(outcome.line);
-    process.exitCode = outcome.exitCode;
+    try {
+      const state = await runCommand(process.cwd(), opts.pipeline, {}, {
+        requirement: opts.requirement,
+        requirementFile: opts.requirementFile,
+      });
+      const outcome = summarizePipelineOutcome(state);
+      console.log(outcome.line);
+      process.exitCode = outcome.exitCode;
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+    }
   });
 
 program

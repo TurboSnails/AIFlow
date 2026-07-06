@@ -3,8 +3,13 @@ import { join } from "node:path";
 import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus, type StageStopReason } from "./state";
 import { readEvents } from "../events/events";
 import { runRalphLoop as realRunRalphLoop } from "../runners/ralph-loop";
+import { runBrainstormStage } from "../runners/brainstorm";
+import { runSpecStage } from "../runners/spec";
+import { runPlanStage } from "../runners/plan";
+import { runHumanGateStage } from "../runners/human-gate";
 import { writeRunReport } from "../commands/report";
 import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
+import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
 export interface StageOutcome {
   result: "pass" | "fail" | "suspended" | "aborted" | "waiting_human";
@@ -52,8 +57,62 @@ async function adaptRalphLoop(
   return { result: summary.result, reason: summary.reason, usage: summary.usage };
 }
 
+async function adaptBrainstorm(
+  stageConfig: StageConfig,
+  stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  nowFn: () => Date,
+  signal?: AbortSignal
+): Promise<StageOutcome> {
+  return runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+}
+
+async function adaptSpec(
+  stageConfig: StageConfig,
+  stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  nowFn: () => Date,
+  signal?: AbortSignal
+): Promise<StageOutcome> {
+  return runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+}
+
+async function adaptPlan(
+  stageConfig: StageConfig,
+  stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  nowFn: () => Date,
+  signal?: AbortSignal
+): Promise<StageOutcome> {
+  return runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+}
+
+async function adaptHumanGate(
+  stageConfig: StageConfig,
+  stageState: StageState,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  nowFn: () => Date,
+  signal?: AbortSignal
+): Promise<StageOutcome> {
+  return runHumanGateStage(stageConfig as HumanGateStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+}
+
 const defaultDeps: EngineDeps = {
-  runners: { ralph_loop: adaptRalphLoop },
+  runners: {
+    ralph_loop: adaptRalphLoop,
+    brainstorm: adaptBrainstorm,
+    spec: adaptSpec,
+    plan: adaptPlan,
+    human_gate: adaptHumanGate,
+  },
   nowFn: () => new Date(),
   writeRunReport: (runDir, state, now, startedAt) => {
     const events = readEvents(runDir);
