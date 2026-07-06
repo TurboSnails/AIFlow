@@ -58,7 +58,7 @@ test("a passing gate marks the story passed, commits, and writes progress.md", a
       git,
     });
 
-    expect(result).toEqual({ storyId: "US-1", result: "pass" });
+    expect(result).toEqual({ storyId: "US-1", result: "pass", usage: { inTok: 10, outTok: 5, costUsd: 0.001 } });
     expect(git.commit).toHaveBeenCalledTimes(1);
     const prd = readPrd(join(cwd, "prd.json"));
     expect(prd.stories[0].passes).toBe(true);
@@ -96,7 +96,7 @@ test("a failing gate records fix_list.md, increments fixCount, and does not comm
       git,
     });
 
-    expect(result).toEqual({ storyId: "US-1", result: "fail" });
+    expect(result).toEqual({ storyId: "US-1", result: "fail", usage: { inTok: 10, outTok: 5, costUsd: 0.001 } });
     expect(git.commit).not.toHaveBeenCalled();
     const prd = readPrd(join(cwd, "prd.json"));
     expect(prd.stories[0].passes).toBe(false);
@@ -131,7 +131,7 @@ test("an agent task that fails (ok:false) is treated as a failed iteration witho
       git,
     });
 
-    expect(result).toEqual({ storyId: "US-1", result: "fail" });
+    expect(result).toEqual({ storyId: "US-1", result: "fail", usage: { inTok: 0, outTok: 0, costUsd: 0 } });
     expect(runReviewGate).not.toHaveBeenCalled();
   } finally {
     rmSync(cwd, { recursive: true, force: true });

@@ -53,6 +53,7 @@ MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts status
 | `aiflow doctor` | Check OpenCode version, git repo, reviewer API reachability |
 | `aiflow init` | Scaffold a `.aiflow/config/` directory in the current project |
 | `aiflow run --pipeline <name>` | Run a pipeline (with optional `--once` to stop after one iteration) |
+| `aiflow resume` | Resume an in-flight or previously-aborted run from its `state.json` (`--run-id`, `--pipeline`, `--force`) |
 | `aiflow status` | Render a one-shot read-only snapshot of the latest run |
 | `aiflow watch` | Re-render the same snapshot every second (Ctrl+C to exit) |
 
@@ -97,7 +98,7 @@ Every `aiflow run` creates `.aiflow/runs/<run-id>/`:
 
 | File / dir | Purpose |
 | --- | --- |
-| `state.json` | Atomic engine snapshot — used by `aiflow resume` (planned) and the monitor |
+| `state.json` | Atomic engine snapshot — used by `aiflow resume` and the monitor |
 | `events.jsonl` | Append-only structured event stream (consumed by `status` / `watch`) |
 | `run-report.md` | Final summary — stages, cost, event counts, story outcomes |
 | `artifacts/opencode/<call>.jsonl` | Verbatim OpenCode JSONL transcript per agent call |

@@ -161,17 +161,6 @@ function describeEvent(evt: AiflowEvent, color: boolean, now: Date): string {
         evt.result === "pass" ? c("green", color, "PASS") : evt.result === "fail" ? c("red", color, "FAIL") : c("yellow", color, "SUSPEND");
       return `${formatTime(evt.ts, now)}  ${c("blue", color, "story")}    ${evt.story}  ${tag}`;
     }
-    case "stage_result": {
-      const tag =
-        evt.result === "pass"
-          ? c("green", color, "PASS")
-          : evt.result === "fail"
-            ? c("red", color, "FAIL")
-            : evt.result === "aborted"
-              ? c("yellow", color, "ABORT")
-              : c("yellow", color, "SUSPEND");
-      return `${formatTime(evt.ts, now)}  ${c("blue", color, "stage")}    ${evt.stage}  ${tag}`;
-    }
   }
 }
 

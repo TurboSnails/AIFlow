@@ -52,9 +52,11 @@ program
   .option("--once", "run exactly one iteration", false)
   .action(async (opts: { pipeline: string; once: boolean }) => {
     const { runCommand } = await import("./commands/run");
+    const { summarizePipelineOutcome } = await import("./engine/engine");
     const state = await runCommand(process.cwd(), opts.pipeline);
-    console.log(`Stage ${state.stages[0].id}: ${state.stages[0].status}`);
-    process.exitCode = state.stages[0].status === "done" ? 0 : 1;
+    const outcome = summarizePipelineOutcome(state);
+    console.log(outcome.line);
+    process.exitCode = outcome.exitCode;
   });
 
 program
@@ -75,8 +77,10 @@ program
       process.exitCode = 1;
       return;
     }
-    console.log(`Run ${result.runId}: stage ${result.state?.stages[0].id} = ${result.state?.stages[0].status}`);
-    process.exitCode = result.state?.stages[0].status === "done" ? 0 : 1;
+    const { summarizePipelineOutcome } = await import("./engine/engine");
+    const outcome = summarizePipelineOutcome(result.state!);
+    console.log(`Run ${result.runId}: ${outcome.line}`);
+    process.exitCode = outcome.exitCode;
   });
 
 program

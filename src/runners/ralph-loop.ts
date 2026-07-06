@@ -27,6 +27,7 @@ export interface RalphLoopDeps {
 export interface RalphLoopResult {
   storyId: string;
   result: "pass" | "fail" | "suspended";
+  usage: { inTok: number; outTok: number; costUsd: number };
 }
 
 const defaultDeps: RalphLoopDeps = {
@@ -106,7 +107,7 @@ export async function runRalphLoopOnce(
     writePrd(prdPath, updatedPrd);
     appendFileSync(fixListPath, `\n## ${story.id} (agent call failed)\nOpenCode agent invocation did not complete successfully.\n`);
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result: "fail" });
-    return { storyId: story.id, result: "fail" };
+    return { storyId: story.id, result: "fail", usage: agentResult.usage };
   }
 
   await deps.git.stageAll(cwd);
@@ -133,7 +134,7 @@ export async function runRalphLoopOnce(
     await deps.git.commit(cwd, `feat(${story.id}): ${story.title}`);
     appendFileSync(progressPath, `\n## ${story.id}\n${story.title} — passed checks and AI review.\n`);
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result: "pass" });
-    return { storyId: story.id, result: "pass" };
+    return { storyId: story.id, result: "pass", usage: agentResult.usage };
   }
 
   const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
@@ -147,5 +148,5 @@ export async function runRalphLoopOnce(
   const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
   const result = suspended ? "suspended" : "fail";
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
-  return { storyId: story.id, result };
+  return { storyId: story.id, result, usage: agentResult.usage };
 }

@@ -39,27 +39,14 @@ export const RalphLoopStageSchema = z.object({
 });
 export type RalphLoopStageConfig = z.infer<typeof RalphLoopStageSchema>;
 
-export const HumanGateStageSchema = z.object({
-  id: z.string(),
-  type: z.literal("human_gate"),
-  prompt: z.string(),
-  /** "none" = wait forever until confirmation; "<n>m" = wait N minutes then default_action. */
-  timeout: z.string().default("none"),
-  /** What to do when timeout fires or stdin returns non-affirmative. */
-  default_action: z.enum(["pass", "fail", "abort"]).default("abort"),
-});
-export type HumanGateStageConfig = z.infer<typeof HumanGateStageSchema>;
-
-export const StageConfigSchema = z.discriminatedUnion("type", [
-  RalphLoopStageSchema,
-  HumanGateStageSchema,
-]);
-export type StageConfig = z.infer<typeof StageConfigSchema>;
+// Placeholder for future stage types (e.g. human_gate) once one is fully
+// designed and implemented end-to-end. For now the engine only supports
+// ralph_loop stages.
+export const StageConfigSchema = RalphLoopStageSchema;
+export type StageConfig = RalphLoopStageConfig;
 
 export const PipelineConfigSchema = z.object({
   name: z.string(),
   stages: z.array(StageConfigSchema).min(1),
 });
 export type PipelineConfig = z.infer<typeof PipelineConfigSchema>;
-
-export type AnyStageConfig = RalphLoopStageConfig | HumanGateStageConfig;

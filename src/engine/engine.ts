@@ -1,32 +1,24 @@
 import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus } from "./state";
-import { appendEvent, readEvents } from "../events/events";
+import { readEvents } from "../events/events";
 import { runRalphLoopOnce as realRunRalphLoopOnce, type RalphLoopResult } from "../runners/ralph-loop";
-import { runHumanGate, writeHumanGateArtifact, type HumanGateDeps, type HumanGateResult } from "../runners/human-gate";
 import { writeRunReport } from "../commands/report";
 import type { PipelineConfig, ModelProfile, StageConfig } from "../config/schema";
 
 export interface EngineDeps {
   runRalphLoopOnce: (
-    stageConfig: Extract<StageConfig, { type: "ralph_loop" }>,
+    stageConfig: StageConfig,
     profiles: Record<string, ModelProfile>,
     cwd: string,
     runDir: string,
     specExcerpt: string
   ) => Promise<RalphLoopResult>;
-  runHumanGate?: (
-    stageConfig: Extract<StageConfig, { type: "human_gate" }>,
-    ctx: { cwd: string; runDir: string; specExcerpt: string },
-    deps?: HumanGateDeps,
-  ) => Promise<HumanGateResult>;
   nowFn?: () => Date;
   writeRunReport?: (runDir: string, state: EngineState, now: Date, startedAt: Date) => void;
-  humanGateDeps?: HumanGateDeps;
 }
 
 const defaultDeps: EngineDeps = {
   runRalphLoopOnce: (stageConfig, profiles, cwd, runDir, specExcerpt) =>
     realRunRalphLoopOnce(stageConfig, profiles, cwd, runDir, specExcerpt),
-  runHumanGate,
   nowFn: () => new Date(),
   writeRunReport: (runDir, state, now, startedAt) => {
     const events = readEvents(runDir);
@@ -53,39 +45,25 @@ export function firstResumeIndex(stages: StageState[]): number {
   return -1;
 }
 
+interface StageExecutionResult {
+  state: StageState;
+  usage?: { inTok: number; outTok: number; costUsd: number };
+}
+
 async function executeStage(
   stage: StageConfig,
-  idx: number,
   profiles: Record<string, ModelProfile>,
   cwd: string,
   runDir: string,
   specExcerpt: string,
   deps: EngineDeps,
   signal: AbortSignal | undefined,
-): Promise<StageState> {
-  if (signal?.aborted) return { id: stage.id, status: "aborted" };
+): Promise<StageExecutionResult> {
+  if (signal?.aborted) return { state: { id: stage.id, status: "aborted" } };
 
-  if (stage.type === "ralph_loop") {
-    const result = await deps.runRalphLoopOnce(stage, profiles, cwd, runDir, specExcerpt);
-    return { id: stage.id, status: result.result === "pass" ? "done" : result.result === "suspended" ? "suspended" : "failed" };
-  }
-
-  if (stage.type === "human_gate") {
-    if (!deps.runHumanGate) return { id: stage.id, status: "aborted" };
-    const result = await deps.runHumanGate(stage, { cwd, runDir, specExcerpt }, deps.humanGateDeps);
-    try {
-      await writeHumanGateArtifact(runDir, stage, result);
-    } catch {
-      // never block engine on artifact errors
-    }
-    const eventResult: "pass" | "fail" | "aborted" = result.outcome === "done" ? "pass" : result.outcome === "failed" ? "fail" : "aborted";
-    appendEvent(runDir, { ts: new Date().toISOString(), type: "stage_result", stage: stage.id, result: eventResult });
-    return { id: stage.id, status: result.outcome };
-  }
-
-  void idx;
-  const unreachable: never = stage;
-  throw new Error(`Unhandled stage type: ${JSON.stringify(unreachable)}`);
+  const result = await deps.runRalphLoopOnce(stage, profiles, cwd, runDir, specExcerpt);
+  const status: StageStatus = result.result === "pass" ? "done" : result.result === "suspended" ? "suspended" : "failed";
+  return { state: { id: stage.id, status }, usage: result.usage };
 }
 
 export interface RunPipelineOptions {
@@ -166,18 +144,42 @@ export async function runPipelineOnce(
     state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "running" } : s)) };
     writeStateAtomic(runDir, state);
 
-    const next = await executeStage(stage, i, profiles, cwd, runDir, specExcerpt, effectiveDeps, signal);
-    state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? next : s)) };
+    const execResult = await executeStage(stage, profiles, cwd, runDir, specExcerpt, effectiveDeps, signal);
+    state = {
+      ...state,
+      stages: state.stages.map((s, idx) => (idx === i ? execResult.state : s)),
+      cost: execResult.usage
+        ? {
+            input_tokens: state.cost.input_tokens + execResult.usage.inTok,
+            output_tokens: state.cost.output_tokens + execResult.usage.outTok,
+            est_usd: state.cost.est_usd + execResult.usage.costUsd,
+          }
+        : state.cost,
+    };
     writeStateAtomic(runDir, state);
 
-    // any failure short-circuits the rest of the pipeline
-    if (!TERMINAL_STATUSES.has(next.status) || next.status === "aborted" || next.status === "failed" || next.status === "suspended") {
+    // any non-"done" outcome short-circuits the rest of the pipeline
+    if (execResult.state.status !== "done") {
       break;
     }
   }
 
   writeReportNow();
   return state;
+}
+
+/**
+ * Summarize a pipeline's overall outcome across ALL stages, not just the
+ * first one — a pipeline with multiple stages is only successful if every
+ * stage reached "done"; reporting only stages[0] would hide a later failure.
+ */
+export function summarizePipelineOutcome(state: EngineState): { line: string; exitCode: number } {
+  const blocking = state.stages.find((s) => s.status !== "done");
+  if (!blocking) {
+    const ids = state.stages.map((s) => s.id).join(", ");
+    return { line: `All stages done (${ids})`, exitCode: 0 };
+  }
+  return { line: `Stage ${blocking.id}: ${blocking.status}`, exitCode: 1 };
 }
 
 export function createRunId(): string {
