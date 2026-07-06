@@ -42,6 +42,18 @@ describe("renderRunReport", () => {
     expect(out).toContain("done |");
   });
 
+  test("includes the stage's reason when present, and an empty cell when absent", () => {
+    const stateWithReason: EngineState = {
+      ...STATE,
+      stages: [{ id: "develop", status: "suspended", reason: "stall" }],
+    };
+    const out = renderRunReport(stateWithReason, EVENTS, {
+      now: new Date("2026-07-05T19:21:30.000Z"),
+      startedAt: new Date("2026-07-05T19:20:00.000Z"),
+    });
+    expect(out).toContain("| develop | suspended | stall |");
+  });
+
   test("includes a duration row computed from startedAt → now", () => {
     const out = renderRunReport(STATE, EVENTS, {
       now: new Date("2026-07-05T19:21:30.000Z"),

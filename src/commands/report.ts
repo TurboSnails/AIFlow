@@ -48,10 +48,10 @@ export function renderRunReport(state: EngineState, events: AiflowEvent[], opts:
   lines.push("");
   lines.push("## Stages");
   lines.push("");
-  lines.push("| id | status |");
-  lines.push("| --- | --- |");
+  lines.push("| id | status | reason |");
+  lines.push("| --- | --- | --- |");
   for (const s of state.stages) {
-    lines.push(`| ${s.id} | ${s.status} |`);
+    lines.push(`| ${s.id} | ${s.status} | ${s.reason ?? ""} |`);
   }
   lines.push("");
   lines.push("## Cost");
