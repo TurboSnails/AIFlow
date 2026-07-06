@@ -99,6 +99,25 @@ program
   });
 
 program
+  .command("approve")
+  .description("Approve a stage that is waiting for human confirmation (human_gate)")
+  .option("--run-id <id>", "target a specific run (defaults to latest)")
+  .option("--stage <id>", "target a specific stage (defaults to the sole waiting stage)")
+  .action(async (opts: { runId?: string; stage?: string }) => {
+    const { runApprove } = await import("./commands/approve");
+    const result = await runApprove(process.cwd(), opts);
+    if (result.status !== "resumed") {
+      console.error(result.message ?? result.status);
+      process.exitCode = 1;
+      return;
+    }
+    const { summarizePipelineOutcome } = await import("./engine/engine");
+    const outcome = summarizePipelineOutcome(result.state!);
+    console.log(`Run ${result.runId}: ${outcome.line}`);
+    process.exitCode = outcome.exitCode;
+  });
+
+program
   .command("status")
   .description("Render the current run snapshot (read-only)")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
