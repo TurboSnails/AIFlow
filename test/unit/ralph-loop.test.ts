@@ -18,6 +18,8 @@ const stageConfig: RalphLoopStageConfig = {
   type: "ralph_loop",
   model: "main-dev",
   per_story_fix_limit: 3,
+  max_iterations: 10,
+  stall_limit: 3,
   gate: {
     checks: ["true"],
     ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] },

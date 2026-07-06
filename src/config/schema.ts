@@ -34,7 +34,9 @@ export const RalphLoopStageSchema = z.object({
   id: z.string(),
   type: z.literal("ralph_loop"),
   model: z.string(),
-  per_story_fix_limit: z.number().default(3),
+  per_story_fix_limit: z.number().int().positive().default(3),
+  max_iterations: z.number().int().positive().default(10),
+  stall_limit: z.number().int().positive().default(3),
   gate: ReviewGateConfigSchema,
 });
 export type RalphLoopStageConfig = z.infer<typeof RalphLoopStageSchema>;

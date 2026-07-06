@@ -53,7 +53,7 @@ test("loadModelsConfig throws on invalid channel value", () => {
   });
 });
 
-test("loadPipelineConfig parses a valid ralph-only.yaml", () => {
+test("loadPipelineConfig parses a valid ralph-only.yaml and applies max_iterations/stall_limit defaults", () => {
   withTempDir((dir) => {
     const path = join(dir, "ralph-only.yaml");
     writeFileSync(
@@ -84,6 +84,60 @@ stages:
     if (stage.type !== "ralph_loop") throw new Error("expected a ralph_loop stage");
     expect(stage.gate.checks).toEqual(["npm run lint", "npm run test"]);
     expect(stage.gate.ai_review.fail_on).toEqual(["blocker"]);
+    expect(stage.max_iterations).toBe(10);
+    expect(stage.stall_limit).toBe(3);
+  });
+});
+
+test("loadPipelineConfig honors explicit max_iterations/stall_limit overrides", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "ralph-only.yaml");
+    writeFileSync(
+      path,
+      `name: ralph-only
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 3
+    max_iterations: 5
+    stall_limit: 2
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`
+    );
+    const config = loadPipelineConfig(path);
+    const stage = config.stages[0];
+    if (stage.type !== "ralph_loop") throw new Error("expected a ralph_loop stage");
+    expect(stage.max_iterations).toBe(5);
+    expect(stage.stall_limit).toBe(2);
+  });
+});
+
+test("loadPipelineConfig rejects a non-positive max_iterations", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "ralph-only.yaml");
+    writeFileSync(
+      path,
+      `name: ralph-only
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    max_iterations: 0
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`
+    );
+    expect(() => loadPipelineConfig(path)).toThrow();
   });
 });
 
