@@ -133,10 +133,37 @@ test("runPipelineOnce aggregates the runner's usage into state.cost", async () =
 
 test("runPipelineOnce throws a clear error for a stage type with no registered runner", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  const brainstormPipeline: PipelineConfig = {
+    name: "has-brainstorm",
+    stages: [
+      {
+        id: "ideate",
+        type: "brainstorm",
+        models: ["main-dev", "reviewer"],
+        mode: "independent",
+        debate_rounds: 2,
+        synthesizer: "main-dev",
+        output: "brainstorm-report.md",
+      },
+    ],
+  };
   try {
     await expect(
-      runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, { runners: {} })
-    ).rejects.toThrow(/No runner registered for stage type "ralph_loop"/);
+      runPipelineOnce(brainstormPipeline, profiles, "/tmp/does-not-matter", runDir, { runners: {} })
+    ).rejects.toThrow(/No runner registered for stage type "brainstorm"/);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce drops an unrecognized reason string rather than passing it through unchecked", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const ralphLoop = mock(async () => ({ result: "suspended" as const, reason: "not_a_real_reason", usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { ralph_loop: ralphLoop },
+    });
+    expect(state.stages[0].reason).toBeUndefined();
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

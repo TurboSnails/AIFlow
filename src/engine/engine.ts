@@ -93,6 +93,19 @@ const STATUS_MAP: Record<StageOutcome["result"], StageStatus> = {
   waiting_human: "waiting_human",
 };
 
+const VALID_STAGE_STOP_REASONS = new Set<string>([
+  "max_iterations",
+  "stall",
+  "stories_suspended",
+  "human_gate_timeout",
+  "human_gate_rejected",
+]);
+
+function toStageStopReason(reason: string | undefined): StageStopReason | undefined {
+  if (reason === undefined) return undefined;
+  return VALID_STAGE_STOP_REASONS.has(reason) ? (reason as StageStopReason) : undefined;
+}
+
 async function executeStage(
   stage: StageConfig,
   stageState: StageState,
@@ -112,7 +125,7 @@ async function executeStage(
   const status = STATUS_MAP[outcome.result];
   const entered_at = outcome.entered_at ?? stageState.entered_at;
   return {
-    state: { id: stage.id, status, reason: outcome.reason as StageStopReason | undefined, entered_at },
+    state: { id: stage.id, status, reason: toStageStopReason(outcome.reason), entered_at },
     usage: outcome.usage,
   };
 }
@@ -143,7 +156,11 @@ export async function runPipelineOnce(
   signal?: AbortSignal,
   opts: RunPipelineOptions = {}
 ): Promise<EngineState> {
-  const effectiveDeps: EngineDeps = { ...defaultDeps, ...deps };
+  const effectiveDeps: EngineDeps = {
+    ...defaultDeps,
+    ...deps,
+    runners: { ...defaultDeps.runners, ...(deps.runners ?? {}) },
+  };
   const nowFn = effectiveDeps.nowFn ?? (() => new Date());
 
   const startedAt = opts.now ?? nowFn();
