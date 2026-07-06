@@ -168,6 +168,10 @@ function describeEvent(evt: AiflowEvent, color: boolean, now: Date): string {
       const reasonSuffix = evt.reason ? ` ${evt.reason}` : "";
       return `${formatTime(evt.ts, now)}  ${c("blue", color, "loop")}     ${evt.stage}  ${tag}${reasonSuffix}  iterations=${evt.iterations} done=${evt.stories_done} suspended=${evt.stories_suspended} pending=${evt.stories_pending}`;
     }
+    default: {
+      const generic = evt as { ts: string; type: string };
+      return `${formatTime(generic.ts, now)}  ${c("blue", color, generic.type)}`;
+    }
   }
 }
 

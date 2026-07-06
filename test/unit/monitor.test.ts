@@ -84,6 +84,21 @@ describe("renderStatus", () => {
     expect(out).toContain("develop");
     expect(out).toContain("suspended");
   });
+
+  test("renders generic fallback for unknown event types (e.g. brainstorm_result)", () => {
+    const events: AiflowEvent[] = [
+      {
+        ts: "2026-07-05T19:20:09.000Z",
+        type: "brainstorm_result",
+        stage: "develop",
+        result: "pass",
+        successes: 5,
+      } as AiflowEvent,
+    ];
+    const out = renderStatus(SAMPLE_STATE, events, { tail: 8, now: new Date("2026-07-05T19:21:00.000Z"), color: false });
+    expect(out).toContain("brainstorm_result");
+    expect(out).not.toContain("undefined");
+  });
 });
 
 describe("readRunSnapshot", () => {
