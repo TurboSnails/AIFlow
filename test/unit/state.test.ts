@@ -38,3 +38,20 @@ test("writeStateAtomic leaves no temp file behind on disk", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("writeStateAtomic then readState round-trips a stage with a reason", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-state-test-"));
+  try {
+    const state: EngineState = {
+      run_id: "r1",
+      pipeline: "ralph-only",
+      stages: [{ id: "develop", status: "suspended", reason: "stall" }],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    };
+    writeStateAtomic(dir, state);
+    const loaded = readState(dir);
+    expect(loaded).toEqual(state);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

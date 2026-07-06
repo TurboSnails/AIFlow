@@ -3,10 +3,13 @@ import { join } from "node:path";
 
 export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended";
 
+export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended";
+
 export interface StageState {
   id: string;
   status: StageStatus;
   iteration?: number;
+  reason?: RalphLoopStopReason;
 }
 
 export interface EngineState {
