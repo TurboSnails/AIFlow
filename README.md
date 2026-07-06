@@ -86,6 +86,8 @@ profiles:
 
 `.aiflow/config/pipelines/<name>.yaml` declares the stages. The bundled `ralph-only` pipeline is a one-stage loop suitable for dev iteration; richer pipelines (`full-auto`, `spec-only`) are planned for v1.1.
 
+A `ralph_loop` stage keeps selecting the highest-priority pending story from `prd.json` and retrying until every story is done or suspended, until `max_iterations` (default 10) is reached, or until `stall_limit` (default 3) consecutive iterations make no progress. A story that fails more than `per_story_fix_limit` (default 3) times is marked `suspended` in `prd.json` and skipped in favor of the next pending story — it does not stop the whole stage. When a stage stops without finishing every story, `state.json`'s `stages[i].reason` (and the corresponding `ralph_loop_result` event in `events.jsonl`) records why: `"max_iterations"`, `"stall"`, or `"stories_suspended"`.
+
 ### How to find the right model id and base_url
 
 Run `aiflow doctor`. If it reports `Reviewer reachable: false` with an error like `JSON parse error` or `HTTP 401`, the most likely cause is an incorrect `base_url`. Re-check the provider's current documentation — different regions often have different base URLs.
