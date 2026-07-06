@@ -1,5 +1,6 @@
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import type { RalphLoopStopReason } from "../engine/state";
 
 export interface OpencodeToolUseAiflowEvent {
   ts: string;
@@ -36,11 +37,24 @@ export interface StoryResultAiflowEvent {
   result: "pass" | "fail" | "suspended";
 }
 
+export interface RalphLoopResultAiflowEvent {
+  ts: string;
+  type: "ralph_loop_result";
+  stage: string;
+  result: "pass" | "suspended" | "aborted";
+  reason?: RalphLoopStopReason;
+  iterations: number;
+  stories_done: number;
+  stories_suspended: number;
+  stories_pending: number;
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
   | GateResultAiflowEvent
-  | StoryResultAiflowEvent;
+  | StoryResultAiflowEvent
+  | RalphLoopResultAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");

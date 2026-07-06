@@ -48,3 +48,25 @@ test("appendEvent then readEvents round-trips multiple events in order", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("appendEvent then readEvents round-trips a ralph_loop_result event", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-test-"));
+  try {
+    const e: AiflowEvent = {
+      ts: "2026-07-06T00:00:00.000Z",
+      type: "ralph_loop_result",
+      stage: "develop",
+      result: "suspended",
+      reason: "stall",
+      iterations: 3,
+      stories_done: 1,
+      stories_suspended: 0,
+      stories_pending: 2,
+    };
+    appendEvent(dir, e);
+    const events = readEvents(dir);
+    expect(events).toEqual([e]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
