@@ -156,3 +156,129 @@ stages:
     expect(() => loadPipelineConfig(path)).toThrow();
   });
 });
+
+test("loadPipelineConfig parses a brainstorm stage with defaults applied", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(
+      path,
+      `name: full-auto
+stages:
+  - id: ideate
+    type: brainstorm
+    models: ["main-dev", "reviewer"]
+    synthesizer: main-dev
+`
+    );
+    const config = loadPipelineConfig(path);
+    const stage = config.stages[0];
+    expect(stage.type).toBe("brainstorm");
+    if (stage.type !== "brainstorm") throw new Error("expected a brainstorm stage");
+    expect(stage.mode).toBe("independent");
+    expect(stage.debate_rounds).toBe(2);
+    expect(stage.output).toBe("brainstorm-report.md");
+  });
+});
+
+test("loadPipelineConfig rejects a brainstorm stage with fewer than 2 models", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(
+      path,
+      `name: full-auto
+stages:
+  - id: ideate
+    type: brainstorm
+    models: ["main-dev"]
+    synthesizer: main-dev
+`
+    );
+    expect(() => loadPipelineConfig(path)).toThrow();
+  });
+});
+
+test("loadPipelineConfig parses a spec stage with default output", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(path, `name: full-auto\nstages:\n  - id: spec\n    type: spec\n    model: main-dev\n`);
+    const config = loadPipelineConfig(path);
+    const stage = config.stages[0];
+    expect(stage.type).toBe("spec");
+    if (stage.type !== "spec") throw new Error("expected a spec stage");
+    expect(stage.output).toBe("spec.md");
+  });
+});
+
+test("loadPipelineConfig parses a plan stage with default input/output", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(path, `name: full-auto\nstages:\n  - id: plan\n    type: plan\n    model: main-dev\n`);
+    const config = loadPipelineConfig(path);
+    const stage = config.stages[0];
+    expect(stage.type).toBe("plan");
+    if (stage.type !== "plan") throw new Error("expected a plan stage");
+    expect(stage.input).toBe("spec.md");
+    expect(stage.output).toBe("prd.json");
+  });
+});
+
+test("loadPipelineConfig parses a human_gate stage; timeout undefined and on_timeout defaults to abort", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(
+      path,
+      `name: full-auto\nstages:\n  - id: confirm\n    type: human_gate\n    prompt: "Please confirm spec.md"\n`
+    );
+    const config = loadPipelineConfig(path);
+    const stage = config.stages[0];
+    expect(stage.type).toBe("human_gate");
+    if (stage.type !== "human_gate") throw new Error("expected a human_gate stage");
+    expect(stage.timeout).toBeUndefined();
+    expect(stage.on_timeout).toBe("abort");
+  });
+});
+
+test("loadPipelineConfig rejects an unknown stage type", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(path, `name: full-auto\nstages:\n  - id: x\n    type: not_a_real_type\n`);
+    expect(() => loadPipelineConfig(path)).toThrow();
+  });
+});
+
+test("loadPipelineConfig parses a pipeline mixing multiple stage types", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "full-auto.yaml");
+    writeFileSync(
+      path,
+      `name: full-auto
+stages:
+  - id: ideate
+    type: brainstorm
+    models: ["main-dev", "reviewer"]
+    synthesizer: main-dev
+  - id: spec
+    type: spec
+    model: main-dev
+  - id: confirm
+    type: human_gate
+    prompt: "confirm"
+  - id: plan
+    type: plan
+    model: main-dev
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 3
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`
+    );
+    const config = loadPipelineConfig(path);
+    expect(config.stages.map((s) => s.type)).toEqual(["brainstorm", "spec", "human_gate", "plan", "ralph_loop"]);
+  });
+});

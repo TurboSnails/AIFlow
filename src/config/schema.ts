@@ -41,11 +41,51 @@ export const RalphLoopStageSchema = z.object({
 });
 export type RalphLoopStageConfig = z.infer<typeof RalphLoopStageSchema>;
 
-// Placeholder for future stage types (e.g. human_gate) once one is fully
-// designed and implemented end-to-end. For now the engine only supports
-// ralph_loop stages.
-export const StageConfigSchema = RalphLoopStageSchema;
-export type StageConfig = RalphLoopStageConfig;
+export const BrainstormStageSchema = z.object({
+  id: z.string(),
+  type: z.literal("brainstorm"),
+  models: z.array(z.string()).min(2),
+  mode: z.enum(["independent", "debate"]).default("independent"),
+  debate_rounds: z.number().int().positive().default(2),
+  synthesizer: z.string(),
+  output: z.string().default("brainstorm-report.md"),
+});
+export type BrainstormStageConfig = z.infer<typeof BrainstormStageSchema>;
+
+export const SpecStageSchema = z.object({
+  id: z.string(),
+  type: z.literal("spec"),
+  model: z.string(),
+  output: z.string().default("spec.md"),
+});
+export type SpecStageConfig = z.infer<typeof SpecStageSchema>;
+
+export const PlanStageSchema = z.object({
+  id: z.string(),
+  type: z.literal("plan"),
+  model: z.string(),
+  input: z.string().default("spec.md"),
+  output: z.string().default("prd.json"),
+});
+export type PlanStageConfig = z.infer<typeof PlanStageSchema>;
+
+export const HumanGateStageSchema = z.object({
+  id: z.string(),
+  type: z.literal("human_gate"),
+  prompt: z.string(),
+  timeout: z.number().int().positive().optional(),
+  on_timeout: z.enum(["approve", "abort"]).default("abort"),
+});
+export type HumanGateStageConfig = z.infer<typeof HumanGateStageSchema>;
+
+export const StageConfigSchema = z.discriminatedUnion("type", [
+  RalphLoopStageSchema,
+  BrainstormStageSchema,
+  SpecStageSchema,
+  PlanStageSchema,
+  HumanGateStageSchema,
+]);
+export type StageConfig = z.infer<typeof StageConfigSchema>;
 
 export const PipelineConfigSchema = z.object({
   name: z.string(),
