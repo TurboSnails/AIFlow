@@ -90,12 +90,19 @@ test("--stage disambiguates and resumes only the named stage, leaving the other 
     { id: "confirm-b", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
   ]);
   try {
-    const result = await runApprove(cwd, { runId, stage: "confirm-a" }, { runners: { human_gate: async () => ({ result: "pass" }) } });
+    // No deps override here: use the real default human_gate runner (runHumanGateStage)
+    // so that the untouched "confirm-b" stage is genuinely re-evaluated by the actual
+    // stage logic (which correctly stays "waiting_human" on a repeat call with no
+    // timeout configured), rather than an unconditional always-"pass" mock that would
+    // mask a regression.
+    const result = await runApprove(cwd, { runId, stage: "confirm-a" });
     expect(result.status).toBe("resumed");
     expect(result.state!.stages[0].status).toBe("done");
-    // engine stops after the first non-terminal stage's outcome unless it's "done" and continues to next;
-    // since stage 0 is now done, the engine proceeds to stage 1 which is still waiting_human (terminal-ish,
-    // engine treats it as a stop condition since it was already waiting_human before this run started).
+    // The other, non-targeted stage must remain waiting_human -- runApprove only
+    // flips the named stage to "done" directly; the resume loop then re-visits
+    // "confirm-b" via the real human_gate runner, which stays waiting_human since
+    // it has already entered and has no timeout configured.
+    expect(result.state!.stages[1].status).toBe("waiting_human");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
