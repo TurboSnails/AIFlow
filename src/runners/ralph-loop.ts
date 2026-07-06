@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
-import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story } from "../prd";
+import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story, type Prd } from "../prd";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate, type ReviewGateOutcome } from "../gate/review-gate";
 import { revParseHead, stageAll, diffCached, commit } from "../git";
 import { appendEvent } from "../events/events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
+import type { RalphLoopStopReason } from "../engine/state";
 
 export interface RalphLoopDeps {
   runAgentTask: (task: AgentTask) => Promise<AgentResult>;
@@ -149,4 +150,125 @@ export async function runRalphLoopOnce(
   const result = suspended ? "suspended" : "fail";
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
   return { storyId: story.id, result, usage: agentResult.usage };
+}
+
+export interface RalphLoopSummary {
+  result: "pass" | "suspended" | "aborted";
+  reason?: RalphLoopStopReason;
+  iterations: number;
+  usage: { inTok: number; outTok: number; costUsd: number };
+}
+
+function countStories(prd: Prd): { done: number; suspended: number; pending: number } {
+  let done = 0;
+  let suspended = 0;
+  let pending = 0;
+  for (const s of prd.stories) {
+    if (s.passes) done += 1;
+    else if (s.suspended) suspended += 1;
+    else pending += 1;
+  }
+  return { done, suspended, pending };
+}
+
+function emitLoopResult(
+  runDir: string,
+  stageId: string,
+  prd: Prd,
+  outcome: { result: RalphLoopSummary["result"]; reason?: RalphLoopStopReason; iterations: number }
+): void {
+  const counts = countStories(prd);
+  appendEvent(runDir, {
+    ts: new Date().toISOString(),
+    type: "ralph_loop_result",
+    stage: stageId,
+    result: outcome.result,
+    reason: outcome.reason,
+    iterations: outcome.iterations,
+    stories_done: counts.done,
+    stories_suspended: counts.suspended,
+    stories_pending: counts.pending,
+  });
+}
+
+function finalizeOutcome(
+  prd: Prd,
+  iterations: number,
+  usage: RalphLoopSummary["usage"]
+): RalphLoopSummary {
+  const anySuspended = prd.stories.some((s) => s.suspended === true);
+  return {
+    result: anySuspended ? "suspended" : "pass",
+    reason: anySuspended ? "stories_suspended" : undefined,
+    iterations,
+    usage,
+  };
+}
+
+/**
+ * Repeatedly runs runRalphLoopOnce until every story is done/suspended,
+ * max_iterations is reached, or stall_limit consecutive iterations make
+ * no progress (technical design doc §6.6).
+ */
+export async function runRalphLoop(
+  stageConfig: RalphLoopStageConfig,
+  profiles: Record<string, ModelProfile>,
+  cwd: string,
+  runDir: string,
+  specExcerpt: string,
+  deps: RalphLoopDeps = defaultDeps,
+  signal?: AbortSignal
+): Promise<RalphLoopSummary> {
+  const usage = { inTok: 0, outTok: 0, costUsd: 0 };
+  let iterations = 0;
+  let stallCount = 0;
+  const prdPath = join(cwd, "prd.json");
+
+  while (true) {
+    const prd = readPrd(prdPath);
+
+    if (signal?.aborted) {
+      const outcome: RalphLoopSummary = { result: "aborted", iterations, usage };
+      emitLoopResult(runDir, stageConfig.id, prd, outcome);
+      return outcome;
+    }
+
+    if (selectNextStory(prd) === null) {
+      const outcome = finalizeOutcome(prd, iterations, usage);
+      emitLoopResult(runDir, stageConfig.id, prd, outcome);
+      return outcome;
+    }
+
+    iterations += 1;
+    const suspendedBefore = countStories(prd).suspended;
+
+    const onceResult = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, specExcerpt, deps);
+    usage.inTok += onceResult.usage.inTok;
+    usage.outTok += onceResult.usage.outTok;
+    usage.costUsd += onceResult.usage.costUsd;
+
+    const prdAfter = readPrd(prdPath);
+
+    if (selectNextStory(prdAfter) === null) {
+      const outcome = finalizeOutcome(prdAfter, iterations, usage);
+      emitLoopResult(runDir, stageConfig.id, prdAfter, outcome);
+      return outcome;
+    }
+
+    if (iterations >= stageConfig.max_iterations) {
+      const outcome: RalphLoopSummary = { result: "suspended", reason: "max_iterations", iterations, usage };
+      emitLoopResult(runDir, stageConfig.id, prdAfter, outcome);
+      return outcome;
+    }
+
+    const suspendedAfter = countStories(prdAfter).suspended;
+    const progressed = onceResult.result === "pass" || suspendedAfter > suspendedBefore;
+    stallCount = progressed ? 0 : stallCount + 1;
+
+    if (stallCount >= stageConfig.stall_limit) {
+      const outcome: RalphLoopSummary = { result: "suspended", reason: "stall", iterations, usage };
+      emitLoopResult(runDir, stageConfig.id, prdAfter, outcome);
+      return outcome;
+    }
+  }
 }
