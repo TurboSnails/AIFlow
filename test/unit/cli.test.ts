@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("cli --help lists doctor, init, run, status, watch commands", async () => {
+test("cli --help lists doctor, init, run, resume, status, watch commands", async () => {
   const proc = Bun.spawn(["bun", "run", join(process.cwd(), "src", "cli.ts"), "--help"], {
     cwd: process.cwd(),
     stdout: "pipe",
@@ -14,6 +14,7 @@ test("cli --help lists doctor, init, run, status, watch commands", async () => {
   expect(output).toContain("doctor");
   expect(output).toContain("init");
   expect(output).toContain("run");
+  expect(output).toContain("resume");
   expect(output).toContain("status");
   expect(output).toContain("watch");
 });

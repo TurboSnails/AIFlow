@@ -79,9 +79,11 @@ stages:
     );
     const config = loadPipelineConfig(path);
     expect(config.name).toBe("ralph-only");
-    expect(config.stages[0].type).toBe("ralph_loop");
-    expect(config.stages[0].gate.checks).toEqual(["npm run lint", "npm run test"]);
-    expect(config.stages[0].gate.ai_review.fail_on).toEqual(["blocker"]);
+    const stage = config.stages[0];
+    expect(stage.type).toBe("ralph_loop");
+    if (stage.type !== "ralph_loop") throw new Error("expected a ralph_loop stage");
+    expect(stage.gate.checks).toEqual(["npm run lint", "npm run test"]);
+    expect(stage.gate.ai_review.fail_on).toEqual(["blocker"]);
   });
 });
 

@@ -36,11 +36,19 @@ export interface StoryResultAiflowEvent {
   result: "pass" | "fail" | "suspended";
 }
 
+export interface StageResultAiflowEvent {
+  ts: string;
+  type: "stage_result";
+  stage: string;
+  result: "pass" | "fail" | "suspended" | "aborted";
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
   | GateResultAiflowEvent
-  | StoryResultAiflowEvent;
+  | StoryResultAiflowEvent
+  | StageResultAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");

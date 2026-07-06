@@ -58,6 +58,28 @@ program
   });
 
 program
+  .command("resume")
+  .description("Resume an in-flight or previously-aborted run (reads state.json)")
+  .option("--run-id <id>", "resume a specific run (defaults to latest)")
+  .option("--pipeline <name>", "override the pipeline name read from state.json")
+  .option("--force", "re-execute stages that already reached a terminal state", false)
+  .action(async (opts: { runId?: string; pipeline?: string; force: boolean }) => {
+    const { runResume } = await import("./commands/resume");
+    const result = await runResume(process.cwd(), {
+      runId: opts.runId,
+      pipeline: opts.pipeline,
+      force: opts.force,
+    });
+    if (result.status === "no_runs" || result.status === "missing_run_dir") {
+      console.error(result.message ?? "");
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Run ${result.runId}: stage ${result.state?.stages[0].id} = ${result.state?.stages[0].status}`);
+    process.exitCode = result.state?.stages[0].status === "done" ? 0 : 1;
+  });
+
+program
   .command("status")
   .description("Render the current run snapshot (read-only)")
   .option("--run-id <id>", "show a specific run (defaults to latest)")

@@ -9,7 +9,7 @@ import { runChecks } from "../gate/check-runner";
 import { callReviewer as realCallReviewer } from "../llm/client";
 import { revParseHead, stageAll, diffCached, commit } from "../git";
 import type { EngineState } from "../engine/state";
-import type { ModelProfile, PipelineConfig } from "../config/schema";
+import type { ModelProfile, StageConfig } from "../config/schema";
 
 export interface RunCommandOverrides {
   runAgentTask?: (task: AgentTask) => Promise<AgentResult>;
@@ -36,7 +36,7 @@ export async function runCommand(
 
   const engineDeps = {
     runRalphLoopOnce: (
-      stageConfig: PipelineConfig["stages"][number],
+      stageConfig: Extract<StageConfig, { type: "ralph_loop" }>,
       profiles: Record<string, ModelProfile>,
       runCwd: string,
       stageRunDir: string,
