@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -25,6 +25,7 @@ test("runCommand throws before creating a run dir when a spec stage needs --requ
   const dir = await setupProject(`name: test-pipeline\nstages:\n  - id: spec\n    type: spec\n    model: main-dev\n`);
   try {
     await expect(runCommand(dir, "test-pipeline")).rejects.toThrow(/requires --requirement/);
+    expect(existsSync(join(dir, ".aiflow", "runs"))).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
