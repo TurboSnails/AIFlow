@@ -182,7 +182,8 @@ export function renderStatus(state: EngineState, events: AiflowEvent[], opts: Mo
     const it = stg.iteration !== undefined ? ` (iteration ${stg.iteration})` : "";
     const stalled = opts.stall?.[stg.id];
     const stallSuffix = stalled?.stalled ? `  ${c("yellow", color, `\u26a0 stalled ${stalled.secondsSinceLastEvent}s`)}` : "";
-    lines.push(`  ${stg.id.padEnd(14)} ${statusColor(stg.status, color)}${it}${stallSuffix}`);
+    const reasonSuffix = stg.reason ? `  ${c("gray", color, `(${stg.reason})`)}` : "";
+    lines.push(`  ${stg.id.padEnd(14)} ${statusColor(stg.status, color)}${it}${stallSuffix}${reasonSuffix}`);
   }
   lines.push("");
   lines.push(c("bold", color, "Cost:"));

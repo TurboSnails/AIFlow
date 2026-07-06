@@ -73,6 +73,17 @@ describe("renderStatus", () => {
     expect(out).toContain("iterations=3");
     expect(out).toContain("done=0 suspended=0 pending=1");
   });
+
+  test("shows a stage's stop reason in the stages table", () => {
+    const state: EngineState = {
+      ...SAMPLE_STATE,
+      stages: [{ id: "develop", status: "suspended", iteration: 5, reason: "stall" }],
+    };
+    const out = renderStatus(state, [], { tail: 5, now: new Date("2026-07-05T19:21:00.000Z"), color: false });
+    expect(out).toContain("stall");
+    expect(out).toContain("develop");
+    expect(out).toContain("suspended");
+  });
 });
 
 describe("readRunSnapshot", () => {
