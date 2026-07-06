@@ -1,4 +1,20 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+
+export const StorySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  acceptance: z.array(z.string()),
+  priority: z.number(),
+  passes: z.boolean(),
+  fixCount: z.number(),
+  suspended: z.boolean().optional(),
+});
+
+export const PrdSchema = z.object({
+  branchName: z.string(),
+  stories: z.array(StorySchema),
+});
 
 export interface Story {
   id: string;

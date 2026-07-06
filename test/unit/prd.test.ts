@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Prd } from "../../src/prd";
+import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, PrdSchema, type Prd } from "../../src/prd";
 
 function samplePrd(): Prd {
   return {
@@ -68,4 +68,19 @@ test("recordStoryFailure suspends the story once fixCount exceeds the limit", ()
   const story = prd.stories.find((s) => s.id === "US-1")!;
   expect(story.fixCount).toBe(4);
   expect(story.suspended).toBe(true);
+});
+
+test("PrdSchema accepts a valid Prd shape", () => {
+  const result = PrdSchema.safeParse(samplePrd());
+  expect(result.success).toBe(true);
+});
+
+test("PrdSchema rejects a story missing required fields", () => {
+  const result = PrdSchema.safeParse({ branchName: "x", stories: [{ id: "US-1", title: "t" }] });
+  expect(result.success).toBe(false);
+});
+
+test("PrdSchema rejects a non-array stories field", () => {
+  const result = PrdSchema.safeParse({ branchName: "x", stories: "not-an-array" });
+  expect(result.success).toBe(false);
 });
