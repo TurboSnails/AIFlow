@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import { createRunId, runPipelineOnce } from "../engine/engine";
-import { runRalphLoopOnce } from "../runners/ralph-loop";
+import { runRalphLoop } from "../runners/ralph-loop";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate } from "../gate/review-gate";
 import { runChecks } from "../gate/check-runner";
@@ -35,22 +35,31 @@ export async function runCommand(
   const reviewerCallFn = overrides.callReviewer ?? realCallReviewer;
 
   const engineDeps = {
-    runRalphLoopOnce: (
+    runRalphLoop: (
       stageConfig: Extract<StageConfig, { type: "ralph_loop" }>,
       profiles: Record<string, ModelProfile>,
       runCwd: string,
       stageRunDir: string,
-      spec: string
+      spec: string,
+      signal?: AbortSignal
     ) =>
-      runRalphLoopOnce(stageConfig, profiles, runCwd, stageRunDir, spec, {
-        runAgentTask,
-        runReviewGate: (config, reviewerProfile, gateCwd, diff, acceptance) =>
-          realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
-            runChecks,
-            callReviewer: reviewerCallFn,
-          }),
-        git: { revParseHead, stageAll, diffCached, commit },
-      }),
+      runRalphLoop(
+        stageConfig,
+        profiles,
+        runCwd,
+        stageRunDir,
+        spec,
+        {
+          runAgentTask,
+          runReviewGate: (config, reviewerProfile, gateCwd, diff, acceptance) =>
+            realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
+              runChecks,
+              callReviewer: reviewerCallFn,
+            }),
+          git: { revParseHead, stageAll, diffCached, commit },
+        },
+        signal
+      ),
   };
 
   return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, specExcerpt, engineDeps);

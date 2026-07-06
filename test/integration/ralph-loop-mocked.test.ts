@@ -18,23 +18,29 @@ async function copyFixture(): Promise<string> {
   return dir;
 }
 
-test("run command: checks fail on the initial broken fixture, story stays unpassed, no commit made", async () => {
-  const dir = await copyFixture();
-  try {
-    const fakeAgent = mock(async () => ({
-      ok: true,
-      transcriptPath: "unused",
-      usage: { inTok: 1, outTok: 1, costUsd: 0 },
-    }));
-    const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent });
-    expect(state.stages[0].status).toBe("failed");
-    const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
-    expect(prd.stories[0].passes).toBe(false);
-    expect(prd.stories[0].fixCount).toBe(1);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+test(
+  "run command: checks fail on the initial broken fixture, loop retries until stall_limit, story stays unpassed",
+  async () => {
+    const dir = await copyFixture();
+    try {
+      const fakeAgent = mock(async () => ({
+        ok: true,
+        transcriptPath: "unused",
+        usage: { inTok: 1, outTok: 1, costUsd: 0 },
+      }));
+      const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent });
+      expect(state.stages[0].status).toBe("suspended");
+      expect(state.stages[0].reason).toBe("stall");
+      expect(state.cost).toEqual({ input_tokens: 3, output_tokens: 3, est_usd: 0 });
+      const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
+      expect(prd.stories[0].passes).toBe(false);
+      expect(prd.stories[0].fixCount).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  20000
+);
 
 test("run command: checks pass and AI review passes when the fix is applied and review is mocked to approve", async () => {
   const dir = await copyFixture();
@@ -65,32 +71,38 @@ test("run command: checks pass and AI review passes when the fix is applied and 
   }
 });
 
-test("run command: checks pass but AI review returns a blocker, story stays unpassed", async () => {
-  const dir = await copyFixture();
-  try {
-    writeFileSync(
-      join(dir, "src", "math.ts"),
-      `export function clamp(value: number, min: number, max: number): number {
+test(
+  "run command: checks pass but AI review returns a blocker every time, loop retries until stall_limit, story stays unpassed",
+  async () => {
+    const dir = await copyFixture();
+    try {
+      writeFileSync(
+        join(dir, "src", "math.ts"),
+        `export function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
   return value;
 }
 `
-    );
-    const fakeAgent = mock(async () => ({
-      ok: true,
-      transcriptPath: "unused",
-      usage: { inTok: 1, outTok: 1, costUsd: 0 },
-    }));
-    const fakeReviewer = mock(async () => ({
-      summary: "missing input validation",
-      issues: [{ severity: "blocker", file: "src/math.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
-    }));
-    const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent, callReviewer: fakeReviewer });
-    expect(state.stages[0].status).toBe("failed");
-    const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
-    expect(prd.stories[0].passes).toBe(false);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+      );
+      const fakeAgent = mock(async () => ({
+        ok: true,
+        transcriptPath: "unused",
+        usage: { inTok: 1, outTok: 1, costUsd: 0 },
+      }));
+      const fakeReviewer = mock(async () => ({
+        summary: "missing input validation",
+        issues: [{ severity: "blocker", file: "src/math.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+      }));
+      const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent, callReviewer: fakeReviewer });
+      expect(state.stages[0].status).toBe("suspended");
+      expect(state.stages[0].reason).toBe("stall");
+      const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
+      expect(prd.stories[0].passes).toBe(false);
+      expect(prd.stories[0].fixCount).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  20000
+);
