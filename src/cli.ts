@@ -118,6 +118,25 @@ program
   });
 
 program
+  .command("reject")
+  .description("Reject a stage that is waiting for human confirmation (human_gate); aborts the pipeline")
+  .option("--run-id <id>", "target a specific run (defaults to latest)")
+  .option("--stage <id>", "target a specific stage (defaults to the sole waiting stage)")
+  .option("--reason <text>", "reason recorded in events.jsonl")
+  .action(async (opts: { runId?: string; stage?: string; reason?: string }) => {
+    const { runReject } = await import("./commands/reject");
+    const result = runReject(process.cwd(), opts);
+    if (result.status !== "rejected") {
+      console.error(result.message ?? result.status);
+      process.exitCode = 1;
+      return;
+    }
+    const rejectedStage = result.state!.stages.find((s) => s.status === "aborted");
+    console.log(`Run ${result.runId}: stage ${rejectedStage?.id} rejected`);
+    process.exitCode = 1;
+  });
+
+program
   .command("status")
   .description("Render the current run snapshot (read-only)")
   .option("--run-id <id>", "show a specific run (defaults to latest)")

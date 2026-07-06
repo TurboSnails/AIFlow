@@ -78,6 +78,13 @@ export interface HumanGateWaitingAiflowEvent {
   prompt: string;
 }
 
+export interface HumanGateRejectedAiflowEvent {
+  ts: string;
+  type: "human_gate_rejected";
+  stage: string;
+  reason?: string;
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
@@ -87,7 +94,8 @@ export type AiflowEvent =
   | BrainstormResultAiflowEvent
   | SpecResultAiflowEvent
   | PlanResultAiflowEvent
-  | HumanGateWaitingAiflowEvent;
+  | HumanGateWaitingAiflowEvent
+  | HumanGateRejectedAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");
