@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -109,6 +109,22 @@ test("checkoutClean removes an untracked file", async () => {
     writeFileSync(join(dir, "untracked.txt"), "new\n");
     await checkoutClean(dir);
     expect(await isClean(dir)).toBe(true);
+    expect(await Bun.file(join(dir, "untracked.txt")).exists()).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkoutClean preserves untracked files inside .aiflow while still removing untracked files elsewhere", async () => {
+  const dir = await makeTempRepo();
+  try {
+    mkdirSync(join(dir, ".aiflow", "runs", "run-1"), { recursive: true });
+    writeFileSync(join(dir, ".aiflow", "runs", "run-1", "events.jsonl"), '{"type":"started"}\n');
+    writeFileSync(join(dir, "untracked.txt"), "new\n");
+
+    await checkoutClean(dir);
+
+    expect(await Bun.file(join(dir, ".aiflow", "runs", "run-1", "events.jsonl")).exists()).toBe(true);
     expect(await Bun.file(join(dir, "untracked.txt")).exists()).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -29,5 +29,5 @@ export async function checkoutClean(cwd: string): Promise<void> {
   // running the gate, so by the time a story is suspended the agent's edits
   // are already staged and `git checkout -- .` would be a no-op.
   await $`git -C ${cwd} checkout HEAD -- .`.quiet();
-  await $`git -C ${cwd} clean -fd`.quiet();
+  await $`git -C ${cwd} clean -fd -e .aiflow`.quiet();
 }
