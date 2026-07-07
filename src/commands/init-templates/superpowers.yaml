@@ -1,0 +1,31 @@
+name: superpowers
+stages:
+  - id: ideate
+    type: brainstorm
+    models: ["reviewer", "alt-reviewer"]
+    synthesizer: reviewer
+    output: brainstorm-report.md
+  - id: spec
+    type: spec
+    model: main-dev
+  - id: confirm-spec
+    type: human_gate
+    prompt: "Review spec.md and the brainstorm synthesis. Approve to proceed to planning, or reject to send this back for rework."
+  - id: plan
+    type: plan
+    model: reviewer
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 3
+    gate:
+      checks:
+        - "npm run lint"
+        - "npm run test"
+      ai_review:
+        enabled: true
+        model: reviewer
+        fail_on: ["blocker"]
+        fail_threshold:
+          major: 3
+        strict: false

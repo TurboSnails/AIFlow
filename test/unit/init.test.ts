@@ -12,6 +12,9 @@ test("runInit creates the .aiflow/config scaffold with default files", () => {
     expect(result.created).toBe(true);
     expect(existsSync(join(dir, ".aiflow", "config", "models.yaml"))).toBe(true);
     expect(existsSync(join(dir, ".aiflow", "config", "pipelines", "ralph-only.yaml"))).toBe(true);
+    expect(existsSync(join(dir, ".aiflow", "config", "pipelines", "superpowers.yaml"))).toBe(true);
+    expect(existsSync(join(dir, ".aiflow", "config", "pipelines", "spec-superflow.yaml"))).toBe(true);
+    expect(existsSync(join(dir, ".aiflow", "config", "pipelines", "openspec.yaml"))).toBe(true);
     expect(existsSync(join(dir, ".aiflow", "config", "project.yaml"))).toBe(true);
     const gitignore = readFileSync(join(dir, ".gitignore"), "utf-8");
     expect(gitignore).toContain(".aiflow/runs/");
