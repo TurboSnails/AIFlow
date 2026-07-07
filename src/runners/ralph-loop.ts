@@ -111,10 +111,6 @@ export async function runRalphLoopOnce(
     story: story.id,
   });
 
-  if (agentResult.ok && budget.record(agentResult.usage.costUsd)) {
-    return { storyId: story.id, result: "paused", usage: agentResult.usage };
-  }
-
   if (agentResult.ok && deps.hashConfigDir(cwd) !== configHashBefore) {
     await deps.git.checkoutConfigOnly(cwd);
     const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
@@ -137,6 +133,10 @@ export async function runRalphLoopOnce(
     const result = suspended ? "suspended" : "fail";
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
     return { storyId: story.id, result, usage: agentResult.usage };
+  }
+
+  if (agentResult.ok && budget.record(agentResult.usage.costUsd)) {
+    return { storyId: story.id, result: "paused", usage: agentResult.usage };
   }
 
   if (!agentResult.ok) {

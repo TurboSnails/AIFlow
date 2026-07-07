@@ -632,6 +632,38 @@ test("a config file changed by the agent mid-iteration fails the gate, reverts t
   }
 });
 
+test("config tamper takes precedence over budget exceeded: checkoutConfigOnly is called and result is fail", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    let hashCall = 0;
+    const hashConfigDir = mock(() => {
+      hashCall += 1;
+      return hashCall === 1 ? "hash-before" : "hash-after-different";
+    });
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 10, outTok: 5, costUsd: 6 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+    const budget = createBudgetTracker(5, 0);
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir,
+    }, budget);
+
+    expect(result.result).toBe("fail");
+    expect(runReviewGate).not.toHaveBeenCalled();
+    expect(git.checkoutConfigOnly).toHaveBeenCalledTimes(1);
+    expect(git.checkoutConfigOnly).toHaveBeenCalledWith(cwd);
+    const prd = readPrd(join(cwd, "prd.json"));
+    expect(prd.stories[0].fixCount).toBe(1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("unchanged config hash before/after does not revert config or skip the review gate", async () => {
   const { cwd, runDir } = makeFixtureDirs();
   try {
