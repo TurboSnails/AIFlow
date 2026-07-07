@@ -232,7 +232,7 @@ test("runPipelineOnce marks the stage aborted when the signal is already aborted
       { runners: { ralph_loop: ralphLoop } },
       controller.signal
     );
-    expect(state.stages[0].status).toBe("aborted");
+    expect(state.stages[0].status).toBe("paused");
     expect(ralphLoop).not.toHaveBeenCalled();
   } finally {
     rmSync(runDir, { recursive: true, force: true });
@@ -293,6 +293,35 @@ describe("runPipelineOnce resume", () => {
       );
       expect(state.stages[0].status).toBe("failed");
       expect(ralphLoop).not.toHaveBeenCalled();
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
+  test("runPipelineOnce resumes a paused stage without --force (paused is not terminal)", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-resume-"));
+    try {
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runDir.split("/").pop(),
+          pipeline: pipeline.name,
+          stages: [{ id: "develop", status: "paused" }],
+          cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+        }),
+      );
+      const ralphLoop = mock(async () => ({ result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+      const state = await runPipelineOnce(
+        pipeline,
+        profiles,
+        "/tmp/does-not-matter",
+        runDir,
+        { runners: { ralph_loop: ralphLoop }, nowFn: () => new Date() },
+        undefined,
+        { resume: true },
+      );
+      expect(state.stages[0].status).toBe("done");
+      expect(ralphLoop).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(runDir, { recursive: true, force: true });
     }

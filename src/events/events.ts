@@ -41,7 +41,7 @@ export interface RalphLoopResultAiflowEvent {
   ts: string;
   type: "ralph_loop_result";
   stage: string;
-  result: "pass" | "suspended" | "aborted";
+  result: "pass" | "suspended" | "paused";
   reason?: RalphLoopStopReason;
   iterations: number;
   stories_done: number;

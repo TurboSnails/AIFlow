@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
-export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended" | "waiting_human";
+export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended" | "waiting_human" | "paused";
 
 export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended";
 export type StageStopReason = RalphLoopStopReason | "human_gate_timeout" | "human_gate_rejected";

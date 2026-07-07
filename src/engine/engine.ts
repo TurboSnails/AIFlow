@@ -12,7 +12,7 @@ import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } 
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
 export interface StageOutcome {
-  result: "pass" | "fail" | "suspended" | "aborted" | "waiting_human";
+  result: "pass" | "fail" | "suspended" | "paused" | "waiting_human";
   reason?: string;
   usage?: { inTok: number; outTok: number; costUsd: number };
   entered_at?: string;
@@ -148,7 +148,7 @@ const STATUS_MAP: Record<StageOutcome["result"], StageStatus> = {
   pass: "done",
   fail: "failed",
   suspended: "suspended",
-  aborted: "aborted",
+  paused: "paused",
   waiting_human: "waiting_human",
 };
 
@@ -175,7 +175,7 @@ async function executeStage(
   deps: EngineDeps,
   signal: AbortSignal | undefined,
 ): Promise<StageExecutionResult> {
-  if (signal?.aborted) return { state: { id: stage.id, status: "aborted" } };
+  if (signal?.aborted) return { state: { id: stage.id, status: "paused" } };
 
   const runner = deps.runners[stage.type];
   if (!runner) throw new Error(`No runner registered for stage type "${stage.type}"`);
@@ -265,7 +265,7 @@ export async function runPipelineOnce(
 
   for (let i = 0; i < pipeline.stages.length; i++) {
     if (signal?.aborted) {
-      state = { ...state, stages: state.stages.map((s) => (s.status === "pending" || s.status === "running" ? { ...s, status: "aborted" } : s)) };
+      state = { ...state, stages: state.stages.map((s) => (s.status === "pending" || s.status === "running" ? { ...s, status: "paused" } : s)) };
       writeStateAtomic(runDir, state);
       break;
     }

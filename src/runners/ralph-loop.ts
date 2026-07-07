@@ -153,7 +153,7 @@ export async function runRalphLoopOnce(
 }
 
 export interface RalphLoopSummary {
-  result: "pass" | "suspended" | "aborted";
+  result: "pass" | "suspended" | "paused";
   reason?: RalphLoopStopReason;
   iterations: number;
   usage: { inTok: number; outTok: number; costUsd: number };
@@ -228,7 +228,7 @@ export async function runRalphLoop(
     const prd = readPrd(prdPath);
 
     if (signal?.aborted) {
-      const outcome: RalphLoopSummary = { result: "aborted", iterations, usage };
+      const outcome: RalphLoopSummary = { result: "paused", iterations, usage };
       emitLoopResult(runDir, stageConfig.id, prd, outcome);
       return outcome;
     }

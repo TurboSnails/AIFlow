@@ -385,7 +385,7 @@ test("runRalphLoop: an already-aborted signal returns aborted immediately withou
       controller.signal
     );
 
-    expect(summary.result).toBe("aborted");
+    expect(summary.result).toBe("paused");
     expect(summary.iterations).toBe(0);
     expect(runAgentTask).not.toHaveBeenCalled();
   } finally {
@@ -417,7 +417,7 @@ test("runRalphLoop: a signal aborted mid-run stops before the next iteration's a
       controller.signal
     );
 
-    expect(summary.result).toBe("aborted");
+    expect(summary.result).toBe("paused");
     expect(summary.iterations).toBe(2);
     expect(calls).toBe(2);
   } finally {
