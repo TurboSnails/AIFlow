@@ -59,7 +59,7 @@ test("run command: checks pass and AI review passes when the fix is applied and 
       transcriptPath: "unused",
       usage: { inTok: 1, outTok: 1, costUsd: 0 },
     }));
-    const fakeReviewer = mock(async () => ({ summary: "looks good", issues: [] }));
+    const fakeReviewer = mock(async () => ({ data: { summary: "looks good", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
     const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent, callReviewer: fakeReviewer });
     expect(state.stages[0].status).toBe("done");
     const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
@@ -91,8 +91,11 @@ test(
         usage: { inTok: 1, outTok: 1, costUsd: 0 },
       }));
       const fakeReviewer = mock(async () => ({
-        summary: "missing input validation",
-        issues: [{ severity: "blocker", file: "src/math.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+        data: {
+          summary: "missing input validation",
+          issues: [{ severity: "blocker", file: "src/math.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+        },
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
       }));
       const state = await runCommand(dir, "ralph-only", { runAgentTask: fakeAgent, callReviewer: fakeReviewer });
       expect(state.stages[0].status).toBe("suspended");

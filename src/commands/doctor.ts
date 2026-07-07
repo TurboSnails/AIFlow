@@ -12,7 +12,7 @@ export interface DoctorReport {
 export interface DoctorDeps {
   checkOpenCodeVersion: () => Promise<string | null>;
   checkGitRepo: (cwd: string) => Promise<boolean>;
-  callReviewer: (profile: ModelProfile, prompt: string) => Promise<unknown>;
+  callReviewer: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
 }
 
 export async function checkOpenCodeVersionReal(): Promise<string | null> {

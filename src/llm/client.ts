@@ -69,13 +69,15 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
       choices: { message: { content: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    const inTok = data.usage?.prompt_tokens ?? 0;
+    const outTok = data.usage?.completion_tokens ?? 0;
+    const costUsd =
+      profile.input_cost_per_1m !== undefined && profile.output_cost_per_1m !== undefined
+        ? (inTok / 1_000_000) * profile.input_cost_per_1m + (outTok / 1_000_000) * profile.output_cost_per_1m
+        : 0;
     return {
       text: data.choices[0].message.content,
-      usage: {
-        inTok: data.usage?.prompt_tokens ?? 0,
-        outTok: data.usage?.completion_tokens ?? 0,
-        costUsd: 0,
-      },
+      usage: { inTok, outTok, costUsd },
     };
   }, 3);
 }
@@ -95,11 +97,16 @@ export async function callLlmFanOut(
   );
 }
 
+export interface ReviewerCallResult {
+  data: unknown;
+  usage: LlmCallResult["usage"];
+}
+
 export async function callReviewer(
   profile: ModelProfile,
   prompt: string,
   fetchFn: typeof fetch = fetch
-): Promise<unknown> {
+): Promise<ReviewerCallResult> {
   const result = await callLlm({ profile, prompt, jsonMode: true, thinking: false, fetchFn });
-  return JSON.parse(result.text);
+  return { data: JSON.parse(result.text), usage: result.usage };
 }

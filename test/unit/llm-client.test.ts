@@ -26,7 +26,7 @@ test("callReviewer sends an OpenAI-compatible chat completion request and return
   }) as unknown as typeof fetch;
 
   const result = await callReviewer(profile, "review this diff", fakeFetch);
-  expect(result).toEqual({ summary: "ok", issues: [] });
+  expect(result.data).toEqual({ summary: "ok", issues: [] });
 });
 
 test("callReviewer throws when the API key env var is not set", async () => {
@@ -119,4 +119,46 @@ test("callLlmFanOut returns per-profile ok/error without one failure blocking th
   expect(results[0].result?.text).toBe("ok");
   expect(results[1].ok).toBe(false);
   expect(results[1].error).toBeDefined();
+});
+
+test("callLlm computes real costUsd from input_cost_per_1m/output_cost_per_1m when configured", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = { ...profile, input_cost_per_1m: 1, output_cost_per_1m: 2 };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1_000_000, completion_tokens: 500_000 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callLlm({ profile: pricedProfile, prompt: "x", fetchFn: fakeFetch });
+  // 1_000_000 tok @ $1/1M = $1.00; 500_000 tok @ $2/1M = $1.00; total $2.00
+  expect(result.usage.costUsd).toBeCloseTo(2, 5);
+});
+
+test("callLlm leaves costUsd at 0 when no pricing is configured on the profile", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 10, completion_tokens: 4 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callLlm({ profile, prompt: "x", fetchFn: fakeFetch });
+  expect(result.usage.costUsd).toBe(0);
+});
+
+test("callReviewer returns both the parsed JSON payload and usage", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ summary: "ok", issues: [] }) } }],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callReviewer(profile, "review this diff", fakeFetch);
+  expect(result.data).toEqual({ summary: "ok", issues: [] });
+  expect(result.usage).toEqual({ inTok: 5, outTok: 2, costUsd: 0 });
 });

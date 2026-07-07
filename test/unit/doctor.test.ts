@@ -15,7 +15,7 @@ test("reports a full success when opencode is present, git repo is valid, and re
   const deps = {
     checkOpenCodeVersion: mock(async () => "1.17.11"),
     checkGitRepo: mock(async () => true),
-    callReviewer: mock(async () => ({ summary: "pong", issues: [] })),
+    callReviewer: mock(async () => ({ data: { summary: "pong", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })),
   };
   const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
   expect(report.openCodeVersion).toBe("1.17.11");
@@ -28,7 +28,7 @@ test("reports opencode missing when the version check returns null", async () =>
   const deps = {
     checkOpenCodeVersion: mock(async () => null),
     checkGitRepo: mock(async () => true),
-    callReviewer: mock(async () => ({})),
+    callReviewer: mock(async () => ({ data: {}, usage: { inTok: 0, outTok: 0, costUsd: 0 } })),
   };
   const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
   expect(report.openCodeVersion).toBeNull();
@@ -37,7 +37,7 @@ test("reports opencode missing when the version check returns null", async () =>
 test("reports reviewer key missing without attempting a network call", async () => {
   delete process.env.UNSET_DOCTOR_KEY;
   const profileWithMissingKey: ModelProfile = { ...reviewerProfile, api_key_env: "UNSET_DOCTOR_KEY" };
-  const callReviewer = mock(async () => ({}));
+  const callReviewer = mock(async () => ({ data: {}, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
   const deps = {
     checkOpenCodeVersion: mock(async () => "1.17.11"),
     checkGitRepo: mock(async () => true),

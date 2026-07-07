@@ -28,7 +28,7 @@ import type {
 
 export interface RunCommandOverrides {
   runAgentTask?: (task: AgentTask) => Promise<AgentResult>;
-  callReviewer?: (profile: ModelProfile, prompt: string) => Promise<unknown>;
+  callReviewer?: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
   callLlm?: typeof realCallLlm;
   callLlmFanOut?: typeof realCallLlmFanOut;
 }

@@ -17,7 +17,7 @@ const baseConfig: ReviewGateConfig = {
 
 test("checks failing skips AI review entirely", async () => {
   const runChecks = mock(async () => ({ pass: false, failedCommand: "npm run lint", output: "lint error" }));
-  const callReviewer = mock(async () => ({ summary: "unused", issues: [] }));
+  const callReviewer = mock(async () => ({ data: { summary: "unused", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
     callReviewer,
@@ -30,8 +30,11 @@ test("checks failing skips AI review entirely", async () => {
 test("checks passing and AI review returning no fail_on-severity issues passes the gate", async () => {
   const runChecks = mock(async () => ({ pass: true, output: "" }));
   const callReviewer = mock(async () => ({
-    summary: "looks fine",
-    issues: [{ severity: "minor", file: "a.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+    data: {
+      summary: "looks fine",
+      issues: [{ severity: "minor", file: "a.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+    },
+    usage: { inTok: 0, outTok: 0, costUsd: 0 },
   }));
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
@@ -45,8 +48,11 @@ test("checks passing and AI review returning no fail_on-severity issues passes t
 test("checks passing but AI review returning a blocker fails the gate", async () => {
   const runChecks = mock(async () => ({ pass: true, output: "" }));
   const callReviewer = mock(async () => ({
-    summary: "found a problem",
-    issues: [{ severity: "blocker", file: "a.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+    data: {
+      summary: "found a problem",
+      issues: [{ severity: "blocker", file: "a.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
+    },
+    usage: { inTok: 0, outTok: 0, costUsd: 0 },
   }));
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
@@ -61,7 +67,7 @@ test("checks passing and AI review parse failure with strict:false falls back to
   let callCount = 0;
   const callReviewer = mock(async () => {
     callCount++;
-    return { not: "valid shape" };
+    return { data: { not: "valid shape" }, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
   });
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
@@ -76,7 +82,7 @@ test("checks passing and AI review parse failure with strict:true fails the gate
   let callCount = 0;
   const callReviewer = mock(async () => {
     callCount++;
-    return { not: "valid shape" };
+    return { data: { not: "valid shape" }, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
   });
   const strictConfig: ReviewGateConfig = { ...baseConfig, ai_review: { ...baseConfig.ai_review, strict: true } };
   const outcome = await runReviewGate(strictConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {

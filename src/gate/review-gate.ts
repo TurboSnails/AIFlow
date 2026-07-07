@@ -11,11 +11,12 @@ export interface ReviewGateOutcome {
   blockers: number;
   checkOutput?: string;
   reviewOutput?: ReviewOutput;
+  usage?: { inTok: number; outTok: number; costUsd: number };
 }
 
 export interface ReviewGateDeps {
   runChecks: (commands: string[], cwd: string) => Promise<CheckResult>;
-  callReviewer: (profile: ModelProfile, prompt: string) => Promise<unknown>;
+  callReviewer: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
 }
 
 const defaultDeps: ReviewGateDeps = { runChecks: realRunChecks, callReviewer: realCallReviewer };
@@ -67,18 +68,22 @@ export async function runReviewGate(
 
   const prompt = buildReviewPrompt(diff, storyAcceptance);
   let lastError: unknown;
+  const usage = { inTok: 0, outTok: 0, costUsd: 0 };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = await deps.callReviewer(
+      const { data: raw, usage: callUsage } = await deps.callReviewer(
         reviewerProfile,
         attempt === 0 ? prompt : `${prompt}\n\nYour previous response failed to parse as the required JSON shape: ${String(lastError)}`
       );
+      usage.inTok += callUsage.inTok;
+      usage.outTok += callUsage.outTok;
+      usage.costUsd += callUsage.costUsd;
       const parsed = ReviewOutputSchema.safeParse(raw);
       if (parsed.success) {
         const blockers = countBlockers(parsed.data, config.ai_review.fail_on);
         const overThreshold = exceedsThreshold(parsed.data, config.ai_review.fail_threshold);
         const aiReview = blockers > 0 || overThreshold ? "fail" : "pass";
-        return { checks: "pass", aiReview, blockers, reviewOutput: parsed.data };
+        return { checks: "pass", aiReview, blockers, reviewOutput: parsed.data, usage };
       }
       lastError = parsed.error;
     } catch (err) {
@@ -86,5 +91,10 @@ export async function runReviewGate(
     }
   }
 
-  return { checks: "pass", aiReview: config.ai_review.strict ? "fail" : "pass", blockers: config.ai_review.strict ? 1 : 0 };
+  return {
+    checks: "pass",
+    aiReview: config.ai_review.strict ? "fail" : "pass",
+    blockers: config.ai_review.strict ? 1 : 0,
+    usage,
+  };
 }
