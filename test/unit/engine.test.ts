@@ -404,3 +404,62 @@ describe("runPipelineOnce resume", () => {
     }
   });
 });
+
+test("runPipelineOnce builds a budget tracker from pipeline.budget and passes it to the runner", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const budgetPipeline: PipelineConfig = { ...pipeline, budget: { max_cost_usd: 5 } };
+    let seenLimit: number | undefined;
+    const ralphLoop = mock(async (_stage, _stageState, _profiles, _cwd, _runDir, _nowFn, _signal, budget) => {
+      seenLimit = budget?.limitUsd;
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    });
+    const state = await runPipelineOnce(budgetPipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { ralph_loop: ralphLoop },
+    });
+    expect(seenLimit).toBe(5);
+    expect(state.budget).toEqual({ limit_usd: 5 });
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce's budget tracker for a later stage starts from the cost already spent in earlier stages", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const twoStagePipeline: PipelineConfig = {
+      name: "two-stage",
+      budget: { max_cost_usd: 10 },
+      stages: [
+        { id: "first", type: "ralph_loop", model: "main-dev", per_story_fix_limit: 3, max_iterations: 10, stall_limit: 3, auto_clean: false, gate: { checks: [], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } } },
+        { id: "second", type: "ralph_loop", model: "main-dev", per_story_fix_limit: 3, max_iterations: 10, stall_limit: 3, auto_clean: false, gate: { checks: [], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } } },
+      ],
+    };
+    let secondStageExceeded: boolean | undefined;
+    const ralphLoop = mock(async (stage, _stageState, _profiles, _cwd, _runDir, _nowFn, _signal, budget) => {
+      if (stage.id === "second") secondStageExceeded = budget?.record(0.000001);
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: stage.id === "first" ? 10 : 0 } };
+    });
+    await runPipelineOnce(twoStagePipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { ralph_loop: ralphLoop },
+    });
+    expect(secondStageExceeded).toBe(true);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce with no pipeline.budget passes a tracker with limitUsd undefined", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    let seenLimit: number | undefined = -1;
+    const ralphLoop = mock(async (_stage, _stageState, _profiles, _cwd, _runDir, _nowFn, _signal, budget) => {
+      seenLimit = budget?.limitUsd;
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    });
+    await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, { runners: { ralph_loop: ralphLoop } });
+    expect(seenLimit).toBeUndefined();
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});

@@ -8,6 +8,7 @@ import { runSpecStage } from "../runners/spec";
 import { runPlanStage } from "../runners/plan";
 import { runHumanGateStage } from "../runners/human-gate";
 import { writeRunReport } from "../commands/report";
+import { createBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
@@ -25,7 +26,8 @@ export type StageRunnerFn = (
   cwd: string,
   runDir: string,
   nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget?: BudgetTracker
 ) => Promise<StageOutcome>;
 
 export interface EngineDeps {
@@ -41,7 +43,8 @@ async function adaptRalphLoop(
   cwd: string,
   runDir: string,
   _nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget?: BudgetTracker
 ): Promise<StageOutcome> {
   const specPath = join(cwd, "spec.md");
   const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
@@ -52,7 +55,8 @@ async function adaptRalphLoop(
     runDir,
     specExcerpt,
     undefined,
-    signal
+    signal,
+    budget
   );
   return { result: summary.result, reason: summary.reason, usage: summary.usage };
 }
@@ -64,9 +68,10 @@ async function adaptBrainstorm(
   cwd: string,
   runDir: string,
   nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+  return runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
 }
 
 async function adaptSpec(
@@ -76,9 +81,10 @@ async function adaptSpec(
   cwd: string,
   runDir: string,
   nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+  return runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
 }
 
 async function adaptPlan(
@@ -88,9 +94,10 @@ async function adaptPlan(
   cwd: string,
   runDir: string,
   nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
+  return runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
 }
 
 async function adaptHumanGate(
@@ -100,7 +107,8 @@ async function adaptHumanGate(
   cwd: string,
   runDir: string,
   nowFn: () => Date,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  _budget?: BudgetTracker
 ): Promise<StageOutcome> {
   return runHumanGateStage(stageConfig as HumanGateStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
 }
@@ -175,13 +183,14 @@ async function executeStage(
   nowFn: () => Date,
   deps: EngineDeps,
   signal: AbortSignal | undefined,
+  budget: BudgetTracker,
 ): Promise<StageExecutionResult> {
   if (signal?.aborted) return { state: { id: stage.id, status: "paused" } };
 
   const runner = deps.runners[stage.type];
   if (!runner) throw new Error(`No runner registered for stage type "${stage.type}"`);
 
-  const outcome = await runner(stage, stageState, profiles, cwd, runDir, nowFn, signal);
+  const outcome = await runner(stage, stageState, profiles, cwd, runDir, nowFn, signal, budget);
   const status = STATUS_MAP[outcome.result];
   const entered_at = outcome.entered_at ?? stageState.entered_at;
   return {
@@ -235,6 +244,7 @@ export async function runPipelineOnce(
       requirement: opts.requirement,
       stages: pipeline.stages.map((s) => ({ id: s.id, status: "pending" as StageStatus })),
       cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      ...(pipeline.budget ? { budget: { limit_usd: pipeline.budget.max_cost_usd } } : {}),
     };
   }
   writeStateAtomic(runDir, state);
@@ -277,7 +287,8 @@ export async function runPipelineOnce(
     state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "running" } : s)) };
     writeStateAtomic(runDir, state);
 
-    const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal);
+    const budgetTracker = createBudgetTracker(state.budget?.limit_usd, state.cost.est_usd);
+    const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal, budgetTracker);
     state = {
       ...state,
       stages: state.stages.map((s, idx) => (idx === i ? execResult.state : s)),
