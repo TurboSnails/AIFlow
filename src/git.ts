@@ -33,5 +33,7 @@ export async function checkoutClean(cwd: string): Promise<void> {
 }
 
 export async function checkoutConfigOnly(cwd: string): Promise<void> {
+  const { exitCode } = await $`git -C ${cwd} ls-files --error-unmatch .aiflow/config`.nothrow().quiet();
+  if (exitCode !== 0) return;
   await $`git -C ${cwd} checkout HEAD -- .aiflow/config`.quiet();
 }

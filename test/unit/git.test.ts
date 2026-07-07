@@ -131,6 +131,24 @@ test("checkoutClean preserves untracked files inside .aiflow while still removin
   }
 });
 
+test("checkoutConfigOnly is a no-op when .aiflow/config is not tracked in git", async () => {
+  const dir = await makeTempRepo();
+  try {
+    mkdirSync(join(dir, ".aiflow", "config"), { recursive: true });
+    writeFileSync(join(dir, ".aiflow", "config", "models.yaml"), "original content\n");
+
+    // The file is untracked; modifying it should still be preserved.
+    writeFileSync(join(dir, ".aiflow", "config", "models.yaml"), "tampered content\n");
+
+    await expect(checkoutConfigOnly(dir)).resolves.toBeUndefined();
+
+    const content = await Bun.file(join(dir, ".aiflow", "config", "models.yaml")).text();
+    expect(content).toBe("tampered content\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("checkoutConfigOnly restores .aiflow/config to HEAD without touching other tracked files", async () => {
   const dir = await makeTempRepo();
   try {
