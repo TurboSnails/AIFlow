@@ -12,7 +12,7 @@ import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } 
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
 export interface StageOutcome {
-  result: "pass" | "fail" | "suspended" | "paused" | "waiting_human";
+  result: "pass" | "fail" | "suspended" | "paused" | "waiting_human" | "aborted";
   reason?: string;
   usage?: { inTok: number; outTok: number; costUsd: number };
   entered_at?: string;
@@ -150,6 +150,7 @@ const STATUS_MAP: Record<StageOutcome["result"], StageStatus> = {
   suspended: "suspended",
   paused: "paused",
   waiting_human: "waiting_human",
+  aborted: "aborted",
 };
 
 const VALID_STAGE_STOP_REASONS = new Set<string>([

@@ -94,6 +94,33 @@ test("runPipelineOnce marks the stage suspended when the runner returns suspende
   }
 });
 
+test("runPipelineOnce marks the stage aborted when a human_gate runner times out with on_timeout: abort", async () => {
+  // Regression test: STATUS_MAP must still map StageOutcome's "aborted" result
+  // (returned by human-gate.ts's genuinely-terminal on_timeout: abort case,
+  // independent of the unrelated signal-triggered "paused" result) through to
+  // an "aborted" stage status. This path had no test coverage and silently
+  // broke when "aborted" was over-narrowed out of StageOutcome.
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const humanGate = mock(async () => ({
+      result: "aborted" as const,
+      reason: "human_gate_timeout" as const,
+    }));
+    const gatePipeline: PipelineConfig = {
+      name: "gate-only",
+      stages: [{ id: "review", type: "human_gate", prompt: "Approve?", timeout: 1, on_timeout: "abort" }],
+    };
+    const state = await runPipelineOnce(gatePipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { human_gate: humanGate },
+    });
+    expect(state.stages[0].status).toBe("aborted");
+    const persisted = readState(runDir);
+    expect(persisted.stages[0].status).toBe("aborted");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runPipelineOnce passes the runner's reason through onto state.stages[i].reason", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {

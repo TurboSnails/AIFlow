@@ -102,6 +102,7 @@ function statusColor(status: EngineState["stages"][number]["status"], on: boolea
     aborted: "yellow",
     suspended: "yellow",
     waiting_human: "yellow",
+    paused: "yellow",
   };
   return c(map[status], on, status);
 }
@@ -166,7 +167,7 @@ function describeEvent(evt: AiflowEvent, color: boolean, now: Date): string {
     }
     case "ralph_loop_result": {
       const tag =
-        evt.result === "pass" ? c("green", color, "PASS") : evt.result === "aborted" ? c("gray", color, "ABORT") : c("yellow", color, "SUSPEND");
+        evt.result === "pass" ? c("green", color, "PASS") : evt.result === "paused" ? c("gray", color, "PAUSE") : c("yellow", color, "SUSPEND");
       const reasonSuffix = evt.reason ? ` ${evt.reason}` : "";
       return `${formatTime(evt.ts, now)}  ${c("blue", color, "loop")}     ${evt.stage}  ${tag}${reasonSuffix}  iterations=${evt.iterations} done=${evt.stories_done} suspended=${evt.stories_suspended} pending=${evt.stories_pending}`;
     }
