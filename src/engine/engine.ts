@@ -8,7 +8,7 @@ import { runSpecStage } from "../runners/spec";
 import { runPlanStage } from "../runners/plan";
 import { runHumanGateStage } from "../runners/human-gate";
 import { writeRunReport } from "../commands/report";
-import { createBudgetTracker, type BudgetTracker } from "../gate/budget";
+import { createBudgetTracker, noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
@@ -71,7 +71,7 @@ async function adaptBrainstorm(
   signal?: AbortSignal,
   budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
+  return runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget ?? noopBudgetTracker);
 }
 
 async function adaptSpec(
@@ -84,7 +84,7 @@ async function adaptSpec(
   signal?: AbortSignal,
   budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
+  return runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget ?? noopBudgetTracker);
 }
 
 async function adaptPlan(
@@ -97,7 +97,7 @@ async function adaptPlan(
   signal?: AbortSignal,
   budget?: BudgetTracker
 ): Promise<StageOutcome> {
-  return runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget);
+  return runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, undefined, budget ?? noopBudgetTracker);
 }
 
 async function adaptHumanGate(

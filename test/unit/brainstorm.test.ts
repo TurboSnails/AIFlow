@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBrainstormStage } from "../../src/runners/brainstorm";
+import { createBudgetTracker } from "../../src/gate/budget";
 import type { BrainstormStageConfig, ModelProfile } from "../../src/config/schema";
 import type { StageState } from "../../src/engine/state";
 
@@ -149,6 +150,36 @@ test("debate mode: round 2 prompt for a model excludes its own round-1 text but 
     // And symmetrically for B.
     expect(round2Prompts.b).not.toContain("ROUND1_TEXT_FROM_B");
     expect(round2Prompts.b).toContain("ROUND1_TEXT_FROM_A");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("stops after the first fan-out round if it alone exceeds the budget, without starting a debate round", async () => {
+  const runDir = setupRunDir();
+  try {
+    const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
+    const callLlmFanOut = mock(async (profs: unknown[]) =>
+      profs.map((p) => ({ profile: p, ok: true, result: { text: "idea", usage: { inTok: 1, outTok: 1, costUsd: 6 } } }))
+    );
+    const callLlm = mock(async () => ({ text: "synthesis", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const budget = createBudgetTracker(5, 0);
+
+    const outcome = await runBrainstormStage(
+      debateStage,
+      { id: "ideate", status: "running" },
+      profiles,
+      "/tmp/does-not-matter",
+      runDir,
+      () => new Date(),
+      undefined,
+      { callLlm, callLlmFanOut },
+      budget
+    );
+
+    expect(outcome.result).toBe("paused");
+    expect(outcome.reason).toBe("budget_exceeded");
+    expect(callLlm).not.toHaveBeenCalled(); // synthesizer call never happens
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

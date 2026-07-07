@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { callLlm } from "../llm/client";
 import { PrdSchema } from "../prd";
 import { appendEvent } from "../events/events";
+import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { PlanStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
@@ -34,7 +35,8 @@ export async function runPlanStage(
   runDir: string,
   _nowFn: () => Date,
   _signal: AbortSignal | undefined,
-  deps: PlanDeps = defaultDeps
+  deps: PlanDeps = defaultDeps,
+  budget: BudgetTracker = noopBudgetTracker
 ): Promise<StageOutcome> {
   const specPath = join(cwd, stageConfig.input);
   const specText = existsSync(specPath) ? readFileSync(specPath, "utf-8") : "";
@@ -48,6 +50,10 @@ export async function runPlanStage(
     usage.inTok += result.usage.inTok;
     usage.outTok += result.usage.outTok;
     usage.costUsd += result.usage.costUsd;
+
+    if (budget.record(result.usage.costUsd)) {
+      return { result: "paused", reason: "budget_exceeded", usage };
+    }
 
     try {
       const parsed = JSON.parse(result.text);

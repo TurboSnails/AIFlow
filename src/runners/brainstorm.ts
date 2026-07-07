@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { callLlm, callLlmFanOut, type LlmCallResult } from "../llm/client";
 import { appendEvent } from "../events/events";
+import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { BrainstormStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
@@ -79,7 +80,8 @@ export async function runBrainstormStage(
   runDir: string,
   _nowFn: () => Date,
   _signal: AbortSignal | undefined,
-  deps: BrainstormDeps = defaultDeps
+  deps: BrainstormDeps = defaultDeps,
+  budget: BudgetTracker = noopBudgetTracker
 ): Promise<StageOutcome> {
   const artifactsDir = join(runDir, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
@@ -103,16 +105,22 @@ export async function runBrainstormStage(
 
   const rounds: FanOutResult[][] = [round1];
   let finalRound = round1;
+  let overBudget = budget.record(sumUsage([round1]).costUsd);
 
   if (stageConfig.mode === "debate") {
-    for (let round = 2; round <= stageConfig.debate_rounds; round++) {
+    for (let round = 2; round <= stageConfig.debate_rounds && !overBudget; round++) {
       const previous = finalRound;
       finalRound = await deps.callLlmFanOut(modelProfiles, (profile) => {
         const others = previous.filter((r) => r.profile !== profile && r.ok && r.result).map((r) => r.result!.text);
         return renderDebatePrompt(requirement, others);
       });
       rounds.push(finalRound);
+      overBudget = budget.record(sumUsage([finalRound]).costUsd);
     }
+  }
+
+  if (overBudget) {
+    return { result: "paused", reason: "budget_exceeded", usage: sumUsage(rounds) };
   }
 
   const synthesizerProfile = profiles[stageConfig.synthesizer];
@@ -121,6 +129,10 @@ export async function runBrainstormStage(
     prompt: renderSynthesisPrompt(requirement, finalRound),
     thinking: true,
   });
+
+  if (budget.record(synthesis.usage.costUsd)) {
+    return { result: "paused", reason: "budget_exceeded", usage: sumUsage(rounds, synthesis) };
+  }
 
   const appendix = finalRound
     .map((r, i) => (r.ok && r.result ? `## Model ${i + 1}\n${r.result.text}` : `## Model ${i + 1}\n(failed: ${r.error})`))

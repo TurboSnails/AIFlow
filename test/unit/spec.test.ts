@@ -1,8 +1,9 @@
 import { test, expect, mock } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runSpecStage } from "../../src/runners/spec";
+import { createBudgetTracker } from "../../src/gate/budget";
 import type { SpecStageConfig, ModelProfile } from "../../src/config/schema";
 import type { StageState } from "../../src/engine/state";
 
@@ -85,5 +86,33 @@ test("agent call itself fails: result is fail", async () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("returns paused/budget_exceeded without writing the output file when the agent call exceeds budget", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-budget-test-"));
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-budget-cwd-"));
+  try {
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 6 } }));
+    const budget = createBudgetTracker(5, 0);
+
+    const outcome = await runSpecStage(
+      stageConfig,
+      { id: "spec", status: "running" },
+      profiles,
+      cwd,
+      runDir,
+      () => new Date(),
+      undefined,
+      { runAgentTask },
+      budget
+    );
+
+    expect(outcome.result).toBe("paused");
+    expect(outcome.reason).toBe("budget_exceeded");
+    expect(existsSync(join(cwd, "spec.md"))).toBe(false);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
   }
 });

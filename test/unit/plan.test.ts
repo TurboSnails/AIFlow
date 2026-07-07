@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPlanStage } from "../../src/runners/plan";
+import { createBudgetTracker } from "../../src/gate/budget";
 import type { PlanStageConfig, ModelProfile } from "../../src/config/schema";
 import type { StageState } from "../../src/engine/state";
 
@@ -73,5 +74,34 @@ test("invalid JSON on both attempts: fail, no prd.json written", async () => {
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("returns paused/budget_exceeded after a single call that exceeds budget, without a retry", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-plan-budget-test-"));
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-plan-budget-cwd-"));
+  try {
+    writeFileSync(join(cwd, "spec.md"), "# Spec");
+    const callLlm = mock(async () => ({ text: "not json", usage: { inTok: 1, outTok: 1, costUsd: 6 } }));
+    const budget = createBudgetTracker(5, 0);
+
+    const outcome = await runPlanStage(
+      stageConfig,
+      { id: "plan", status: "running" },
+      profiles,
+      cwd,
+      runDir,
+      () => new Date(),
+      undefined,
+      { callLlm },
+      budget
+    );
+
+    expect(outcome.result).toBe("paused");
+    expect(outcome.reason).toBe("budget_exceeded");
+    expect(callLlm).toHaveBeenCalledTimes(1); // no second attempt
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
   }
 });
