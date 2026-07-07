@@ -7,6 +7,7 @@ export interface DoctorReport {
   reviewerKeyPresent: boolean;
   reviewerReachable: boolean | null;
   reviewerError?: string;
+  pricingWarnings: string[];
 }
 
 export interface DoctorDeps {
@@ -55,17 +56,23 @@ export async function runDoctorChecks(
   const openCodeVersion = await deps.checkOpenCodeVersion();
   const gitOk = await deps.checkGitRepo(cwd);
 
+  const pricingWarnings: string[] =
+    reviewerProfile && reviewerProfile.channel === "http" &&
+    (reviewerProfile.input_cost_per_1m === undefined || reviewerProfile.output_cost_per_1m === undefined)
+      ? ["Profile has no input_cost_per_1m/output_cost_per_1m configured; its spend will not count toward budget or cost reports."]
+      : [];
+
   const reviewerKeyPresent = Boolean(
     reviewerProfile?.api_key_env && process.env[reviewerProfile.api_key_env]
   );
 
   if (!reviewerProfile || !reviewerKeyPresent) {
-    return { openCodeVersion, gitOk, reviewerKeyPresent, reviewerReachable: null };
+    return { openCodeVersion, gitOk, reviewerKeyPresent, reviewerReachable: null, pricingWarnings };
   }
 
   try {
     await deps.callReviewer(reviewerProfile, 'Respond with only this JSON: {"summary":"pong","issues":[]}');
-    return { openCodeVersion, gitOk, reviewerKeyPresent, reviewerReachable: true };
+    return { openCodeVersion, gitOk, reviewerKeyPresent, reviewerReachable: true, pricingWarnings };
   } catch (err) {
     return {
       openCodeVersion,
@@ -73,6 +80,7 @@ export async function runDoctorChecks(
       reviewerKeyPresent,
       reviewerReachable: false,
       reviewerError: err instanceof Error ? err.message : String(err),
+      pricingWarnings,
     };
   }
 }

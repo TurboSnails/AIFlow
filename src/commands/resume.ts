@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import type { ModelProfile } from "../config/schema";
@@ -23,7 +23,7 @@ function pickLatestRun(cwd: string): string | undefined {
 
 export async function runResume(
   cwd: string,
-  opts: { runId?: string; pipeline?: string; force?: boolean },
+  opts: { runId?: string; pipeline?: string; force?: boolean; raiseBudget?: number },
   deps?: EngineDeps,
   signal?: AbortSignal
 ): Promise<ResumeResult> {
@@ -37,6 +37,11 @@ export async function runResume(
   const persisted = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const pipelineName = opts.pipeline ?? persisted.pipeline;
   const wasTerminal = persisted.stages.every((s) => isTerminalStatus(s.status));
+
+  if (opts.raiseBudget !== undefined) {
+    persisted.budget = { limit_usd: opts.raiseBudget };
+    writeFileSync(statePath, JSON.stringify(persisted, null, 2));
+  }
 
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));

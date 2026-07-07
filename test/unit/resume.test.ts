@@ -106,4 +106,51 @@ describe("runResume", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test("resume with --raise-budget overrides state.budget.limit_usd while preserving cost already spent", async () => {
+    const cwd = await copyFixture();
+    try {
+      const runId = "20260701_140000_abcd12";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runId,
+          pipeline: "ralph-only",
+          stages: [{ id: "develop", status: "paused", reason: "budget_exceeded" }],
+          cost: { input_tokens: 100, output_tokens: 20, est_usd: 5 },
+          budget: { limit_usd: 5 },
+        }),
+      );
+      writeFileSync(join(runDir, "prd.json"), JSON.stringify({ branchName: "fix/clamp", stories: [{ id: "US-1", title: "x", acceptance: [], priority: 1, passes: false, fixCount: 0 }] }));
+      mkdirSync(join(cwd, "src"), { recursive: true });
+      writeFileSync(
+        join(cwd, "src", "math.ts"),
+        `export function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+`,
+      );
+
+      const result = await runResume(
+        cwd,
+        { runId, pipeline: "ralph-only", raiseBudget: 50 },
+        {
+          runners: {
+            ralph_loop: async () => ({
+              result: "pass" as const,
+              usage: { inTok: 0, outTok: 0, costUsd: 0 },
+            }),
+          },
+        }
+      );
+      expect(result.state?.budget).toEqual({ limit_usd: 50 });
+      expect(result.state?.cost.est_usd).toBe(5);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

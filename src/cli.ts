@@ -26,6 +26,7 @@ program
     console.log(`Reviewer API key present: ${report.reviewerKeyPresent}`);
     console.log(`Reviewer reachable: ${report.reviewerReachable ?? "skipped (no key)"}`);
     if (report.reviewerError) console.log(`Reviewer error: ${report.reviewerError}`);
+    for (const warning of report.pricingWarnings) console.log(`Pricing warning: ${warning}`);
 
     const fatal = !report.openCodeVersion || !report.gitOk;
     process.exitCode = fatal ? 1 : 0;

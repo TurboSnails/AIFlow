@@ -62,3 +62,16 @@ test("reports reviewer unreachable with the error message when the ping call thr
   expect(report.reviewerReachable).toBe(false);
   expect(report.reviewerError).toContain("401 unauthorized");
 });
+
+test("reports a pricing warning for a channel:http profile missing input_cost_per_1m/output_cost_per_1m", async () => {
+  process.env.TEST_DOCTOR_KEY = "present";
+  const deps = {
+    checkOpenCodeVersion: mock(async () => "1.17.11"),
+    checkGitRepo: mock(async () => true),
+    callReviewer: mock(async () => ({ data: { summary: "pong", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })),
+  };
+  const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
+  expect(report.pricingWarnings).toContain(
+    "Profile has no input_cost_per_1m/output_cost_per_1m configured; its spend will not count toward budget or cost reports."
+  );
+});
