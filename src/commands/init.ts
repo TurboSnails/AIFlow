@@ -19,27 +19,11 @@ const MODELS_YAML_TEMPLATE = `profiles:
     api_key_env: MINIMAX_API_KEY
 `;
 
-const RALPH_ONLY_YAML_TEMPLATE = `name: ralph-only
-stages:
-  - id: develop
-    type: ralph_loop
-    model: main-dev
-    per_story_fix_limit: 3
-    gate:
-      checks:
-        - "npm run lint"
-        - "npm run test"
-      ai_review:
-        enabled: true
-        model: reviewer
-        fail_on: ["blocker"]
-        fail_threshold:
-          major: 3
-        strict: false
-`;
-
 const PROJECT_YAML_TEMPLATE = `{}
 `;
+
+const TEMPLATES_DIR = join(import.meta.dir, "init-templates");
+const PIPELINE_TEMPLATE_NAMES = ["ralph-only"];
 
 export function runInit(cwd: string): InitResult {
   const configDir = join(cwd, ".aiflow", "config");
@@ -49,7 +33,10 @@ export function runInit(cwd: string): InitResult {
 
   mkdirSync(join(configDir, "pipelines"), { recursive: true });
   writeFileSync(join(configDir, "models.yaml"), MODELS_YAML_TEMPLATE);
-  writeFileSync(join(configDir, "pipelines", "ralph-only.yaml"), RALPH_ONLY_YAML_TEMPLATE);
+  for (const name of PIPELINE_TEMPLATE_NAMES) {
+    const content = readFileSync(join(TEMPLATES_DIR, `${name}.yaml`), "utf-8");
+    writeFileSync(join(configDir, "pipelines", `${name}.yaml`), content);
+  }
   writeFileSync(join(configDir, "project.yaml"), PROJECT_YAML_TEMPLATE);
 
   const gitignorePath = join(cwd, ".gitignore");

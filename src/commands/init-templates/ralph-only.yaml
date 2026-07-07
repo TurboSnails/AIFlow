@@ -1,0 +1,17 @@
+name: ralph-only
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 3
+    gate:
+      checks:
+        - "npm run lint"
+        - "npm run test"
+      ai_review:
+        enabled: true
+        model: reviewer
+        fail_on: ["blocker"]
+        fail_threshold:
+          major: 3
+        strict: false
