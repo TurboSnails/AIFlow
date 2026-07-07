@@ -63,6 +63,8 @@ MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts status
 
 `aiflow run` also accepts `--requirement <text>` (inline requirement text) or `--requirement-file <path>` (path to a file with the requirement text) — mutually exclusive — for pipelines whose first stage is `brainstorm` or `spec`.
 
+`aiflow run`, `aiflow resume`, and `aiflow approve` handle Ctrl+C gracefully: they wait for the current step to finish, mark the remaining stages `paused` in `state.json`, and exit — a later `aiflow resume` picks the pipeline back up normally, without needing `--force`.
+
 ---
 
 ## Configuration
@@ -112,6 +114,8 @@ A `full-auto` pipeline (`brainstorm → spec → confirm-spec(human_gate) → pl
 `superpowers`/`spec-superflow`/`openspec` all start with a `brainstorm` or `spec` stage, so they need `aiflow run --pipeline <name> --requirement "..."` (or `--requirement-file`) — see `docs/superpowers/specs/2026-07-07-workflow-pipeline-templates-design.md` for the full methodology research and what each template deliberately does not attempt to replicate from the original tools.
 
 A `ralph_loop` stage keeps selecting the highest-priority pending story from `prd.json` and retrying until every story is done or suspended, until `max_iterations` (default 10) is reached, or until `stall_limit` (default 3) consecutive iterations make no progress. A story that fails more than `per_story_fix_limit` (default 3) times is marked `suspended` in `prd.json` and skipped in favor of the next pending story — it does not stop the whole stage. When a stage stops without finishing every story, `state.json`'s `stages[i].reason` (and the corresponding `ralph_loop_result` event in `events.jsonl`) records why: `"max_iterations"`, `"stall"`, or `"stories_suspended"`.
+
+Setting `auto_clean: true` on a `ralph_loop` stage reverts the working tree to `HEAD` whenever a story is newly suspended, discarding that story's uncommitted, unfinished edits before moving on to the next one. It requires a clean working tree at run start.
 
 ### How to find the right model id and base_url
 
