@@ -11,6 +11,7 @@ import { runHumanGateStage } from "../runners/human-gate";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate } from "../gate/review-gate";
 import { runChecks } from "../gate/check-runner";
+import type { BudgetTracker } from "../gate/budget";
 import {
   callReviewer as realCallReviewer,
   callLlm as realCallLlm,
@@ -84,7 +85,7 @@ export async function runCommand(
 
   const engineDeps: EngineDeps = {
     runners: {
-      ralph_loop: async (stageConfig, _stageState, profiles, runCwd, stageRunDir, _nowFn, signal): Promise<StageOutcome> => {
+      ralph_loop: async (stageConfig, _stageState, profiles, runCwd, stageRunDir, _nowFn, signal, budget): Promise<StageOutcome> => {
         const specPath = join(runCwd, "spec.md");
         const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
         const summary = await runRalphLoop(
@@ -103,19 +104,20 @@ export async function runCommand(
             git: { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly },
             hashConfigDir: realHashConfigDir,
           },
-          signal
+          signal,
+          budget
         );
         return { result: summary.result, reason: summary.reason, usage: summary.usage };
       },
-      brainstorm: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal) =>
+      brainstorm: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
         runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, {
           callLlm: callLlmFn,
           callLlmFanOut: callLlmFanOutFn,
-        }),
-      spec: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal) =>
-        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { runAgentTask }),
-      plan: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal) =>
-        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { callLlm: callLlmFn }),
+        }, budget),
+      spec: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
+        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { runAgentTask }, budget),
+      plan: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
+        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { callLlm: callLlmFn }, budget),
       human_gate: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal) =>
         runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal),
     },

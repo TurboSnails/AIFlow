@@ -117,6 +117,48 @@ test("full pipeline pauses at human_gate, then reject aborts without running the
   }
 });
 
+test("a budget-exceeded run releases its lock, and a second run in the same project can then acquire it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-safety-integration-"));
+  try {
+    mkdirSync(join(dir, ".aiflow", "config", "pipelines"), { recursive: true });
+    writeFileSync(
+      join(dir, ".aiflow", "config", "models.yaml"),
+      "profiles:\n  main-dev:\n    channel: opencode\n    provider: x\n    model: y\n  reviewer:\n    channel: http\n    provider: y\n    model: z\n"
+    );
+    writeFileSync(
+      join(dir, ".aiflow", "config", "pipelines", "budgeted.yaml"),
+      'name: budgeted\nbudget:\n  max_cost_usd: 1\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    per_story_fix_limit: 3\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n'
+    );
+    writeFileSync(
+      join(dir, "prd.json"),
+      JSON.stringify({ branchName: "x", stories: [{ id: "US-1", title: "t", acceptance: [], priority: 1, passes: false, fixCount: 0 }] })
+    );
+    await $`git -C ${dir} init -q`;
+    await $`git -C ${dir} config user.email "test@example.com"`;
+    await $`git -C ${dir} config user.name "Test"`;
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "initial"`;
+
+    const expensiveAgent = async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 5 } });
+
+    const state = await runCommand(dir, "budgeted", { runAgentTask: expensiveAgent });
+    expect(state.stages[0].status).toBe("paused");
+    expect(state.stages[0].reason).toBe("budget_exceeded");
+    expect(existsSync(join(dir, ".aiflow", "run.lock"))).toBe(false);
+
+    // A second, independent run in the same project must be able to acquire the lock immediately.
+    writeFileSync(
+      join(dir, ".aiflow", "config", "pipelines", "cheap.yaml"),
+      'name: cheap\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    per_story_fix_limit: 3\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n'
+    );
+    const freeAgent = async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } });
+    const second = await runCommand(dir, "cheap", { runAgentTask: freeAgent });
+    expect(second.stages[0].status).toBe("done");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("run without --requirement fails before creating any run directory", async () => {
   const dir = await setupProject();
   try {
