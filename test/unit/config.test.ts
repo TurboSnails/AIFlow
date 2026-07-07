@@ -282,3 +282,82 @@ stages:
     expect(config.stages.map((s) => s.type)).toEqual(["brainstorm", "spec", "human_gate", "plan", "ralph_loop"]);
   });
 });
+
+test("loadModelsConfig parses optional input_cost_per_1m/output_cost_per_1m", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "models.yaml");
+    writeFileSync(
+      path,
+      `profiles:
+  reviewer:
+    channel: http
+    provider: minimax
+    model: some-model
+    base_url: https://api.minimaxi.com/v1
+    api_key_env: MINIMAX_API_KEY
+    input_cost_per_1m: 0.6
+    output_cost_per_1m: 2.4
+`
+    );
+    const config = loadModelsConfig(path);
+    expect(config.profiles["reviewer"].input_cost_per_1m).toBe(0.6);
+    expect(config.profiles["reviewer"].output_cost_per_1m).toBe(2.4);
+  });
+});
+
+test("loadModelsConfig leaves input_cost_per_1m/output_cost_per_1m undefined when omitted", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "models.yaml");
+    writeFileSync(path, `profiles:\n  main-dev:\n    channel: opencode\n    provider: opencode\n    model: x\n`);
+    const config = loadModelsConfig(path);
+    expect(config.profiles["main-dev"].input_cost_per_1m).toBeUndefined();
+  });
+});
+
+test("loadPipelineConfig parses an optional top-level budget.max_cost_usd", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "ralph-only.yaml");
+    writeFileSync(
+      path,
+      `name: ralph-only
+budget:
+  max_cost_usd: 20
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`
+    );
+    const config = loadPipelineConfig(path);
+    expect(config.budget?.max_cost_usd).toBe(20);
+  });
+});
+
+test("loadPipelineConfig leaves budget undefined when omitted", () => {
+  withTempDir((dir) => {
+    const path = join(dir, "ralph-only.yaml");
+    writeFileSync(
+      path,
+      `name: ralph-only
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`
+    );
+    const config = loadPipelineConfig(path);
+    expect(config.budget).toBeUndefined();
+  });
+});

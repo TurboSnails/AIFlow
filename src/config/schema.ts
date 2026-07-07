@@ -10,6 +10,8 @@ export const ModelProfileSchema = z.object({
   dangerously_skip_permissions: z.boolean().optional(),
   base_url: z.string().optional(),
   api_key_env: z.string().optional(),
+  input_cost_per_1m: z.number().nonnegative().optional(),
+  output_cost_per_1m: z.number().nonnegative().optional(),
 });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
@@ -88,8 +90,14 @@ export const StageConfigSchema = z.discriminatedUnion("type", [
 ]);
 export type StageConfig = z.infer<typeof StageConfigSchema>;
 
+export const BudgetConfigSchema = z.object({
+  max_cost_usd: z.number().positive(),
+});
+export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
+
 export const PipelineConfigSchema = z.object({
   name: z.string(),
+  budget: BudgetConfigSchema.optional(),
   stages: z.array(StageConfigSchema).min(1),
 });
 export type PipelineConfig = z.infer<typeof PipelineConfigSchema>;

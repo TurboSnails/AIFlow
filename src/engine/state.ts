@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended" | "waiting_human" | "paused";
 
-export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended";
+export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended" | "budget_exceeded";
 export type StageStopReason = RalphLoopStopReason | "human_gate_timeout" | "human_gate_rejected";
 
 export interface StageState {
@@ -20,6 +20,7 @@ export interface EngineState {
   requirement?: string;
   stages: StageState[];
   cost: { input_tokens: number; output_tokens: number; est_usd: number };
+  budget?: { limit_usd: number };
 }
 
 export function writeStateAtomic(runDir: string, state: EngineState): void {

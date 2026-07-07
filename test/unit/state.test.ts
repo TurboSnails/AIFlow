@@ -90,3 +90,38 @@ test("writeStateAtomic then readState round-trips a paused stage", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("writeStateAtomic then readState round-trips a budget field", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-state-test-"));
+  try {
+    const state: EngineState = {
+      run_id: "r1",
+      pipeline: "ralph-only",
+      stages: [],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      budget: { limit_usd: 20 },
+    };
+    writeStateAtomic(dir, state);
+    const loaded = readState(dir);
+    expect(loaded).toEqual(state);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeStateAtomic then readState round-trips a stage with reason budget_exceeded", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-state-test-"));
+  try {
+    const state: EngineState = {
+      run_id: "r1",
+      pipeline: "ralph-only",
+      stages: [{ id: "develop", status: "paused", reason: "budget_exceeded" }],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    };
+    writeStateAtomic(dir, state);
+    const loaded = readState(dir);
+    expect(loaded).toEqual(state);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
