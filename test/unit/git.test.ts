@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { revParseHead, stageAll, diffCached, commit, isClean, checkoutClean } from "../../src/git";
+import { revParseHead, stageAll, diffCached, commit, isClean, checkoutClean, checkoutConfigOnly } from "../../src/git";
 
 async function makeTempRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-git-test-"));
@@ -126,6 +126,28 @@ test("checkoutClean preserves untracked files inside .aiflow while still removin
 
     expect(await Bun.file(join(dir, ".aiflow", "runs", "run-1", "events.jsonl")).exists()).toBe(true);
     expect(await Bun.file(join(dir, "untracked.txt")).exists()).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkoutConfigOnly restores .aiflow/config to HEAD without touching other tracked files", async () => {
+  const dir = await makeTempRepo();
+  try {
+    mkdirSync(join(dir, ".aiflow", "config"), { recursive: true });
+    writeFileSync(join(dir, ".aiflow", "config", "models.yaml"), "profiles: {}\n");
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "add config"`;
+
+    writeFileSync(join(dir, ".aiflow", "config", "models.yaml"), "profiles:\n  tampered: true\n");
+    writeFileSync(join(dir, "a.txt"), "also changed\n");
+
+    await checkoutConfigOnly(dir);
+
+    const configContent = await Bun.file(join(dir, ".aiflow", "config", "models.yaml")).text();
+    expect(configContent).toBe("profiles: {}\n");
+    const aContent = await Bun.file(join(dir, "a.txt")).text();
+    expect(aContent).toBe("also changed\n");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

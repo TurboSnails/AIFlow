@@ -31,3 +31,7 @@ export async function checkoutClean(cwd: string): Promise<void> {
   await $`git -C ${cwd} checkout HEAD -- .`.quiet();
   await $`git -C ${cwd} clean -fd -e .aiflow`.quiet();
 }
+
+export async function checkoutConfigOnly(cwd: string): Promise<void> {
+  await $`git -C ${cwd} checkout HEAD -- .aiflow/config`.quiet();
+}
