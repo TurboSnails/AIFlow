@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireRunLock, LockWaitAbortedError } from "../../src/lock";
@@ -103,6 +103,39 @@ test("onWaiting fires exactly once even across multiple poll iterations", async 
     });
     const lock = await waiter;
     expect(waitingCalls).toBe(1);
+    lock.release();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("acquireRunLock handles TOCTOU race: file deleted between check and read", async () => {
+  const dir = tmpProject();
+  try {
+    const held = await acquireRunLock(dir, "run-holder", { isPidAliveFn: () => true });
+    let readAttempts = 0;
+    let sleeps = 0;
+    const waiter = acquireRunLock(dir, "run-waiter", {
+      isPidAliveFn: () => true,
+      pollMs: 5,
+      readLockFn: (path) => {
+        readAttempts += 1;
+        if (readAttempts === 1) {
+          // First read attempt: simulate file deleted between existsSync and readFileSync
+          throw new Error("ENOENT: no such file or directory");
+        }
+        // Subsequent attempts: return valid lock info
+        const content = readFileSync(path, "utf-8");
+        return JSON.parse(content);
+      },
+      sleepFn: async (ms) => {
+        sleeps += 1;
+        if (sleeps === 2) held.release();
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      },
+    });
+    const lock = await waiter;
+    expect(readAttempts).toBeGreaterThanOrEqual(2); // Should retry after race
     lock.release();
   } finally {
     rmSync(dir, { recursive: true, force: true });

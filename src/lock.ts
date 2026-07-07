@@ -24,6 +24,7 @@ export interface AcquireLockOptions {
   onStaleReclaimed?: (info: LockInfo) => void;
   sleepFn?: (ms: number) => Promise<void>;
   isPidAliveFn?: (pid: number) => boolean;
+  readLockFn?: (path: string) => LockInfo; // injectable for testing race conditions
 }
 
 function lockPath(cwd: string): string {
@@ -41,6 +42,11 @@ function isPidAliveReal(pid: number): boolean {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+function defaultReadLock(path: string): LockInfo {
+  const content = readFileSync(path, "utf-8");
+  return JSON.parse(content) as LockInfo;
+}
+
 export async function acquireRunLock(
   cwd: string,
   runId: string,
@@ -53,6 +59,7 @@ export async function acquireRunLock(
     onStaleReclaimed,
     sleepFn = defaultSleep,
     isPidAliveFn = isPidAliveReal,
+    readLockFn = defaultReadLock,
   } = opts;
   const path = lockPath(cwd);
   mkdirSync(join(cwd, ".aiflow"), { recursive: true });
@@ -78,8 +85,14 @@ export async function acquireRunLock(
       if (code !== "EEXIST") throw err;
     }
 
-    if (!existsSync(path)) continue; // raced with a concurrent release; retry immediately
-    const existing = JSON.parse(readFileSync(path, "utf-8")) as LockInfo;
+    let existing: LockInfo;
+    try {
+      existing = readLockFn(path);
+    } catch {
+      // TOCTOU race: file deleted between existsSync and readFileSync,
+      // or file is malformed (partial write). Retry acquire.
+      continue;
+    }
     if (!isPidAliveFn(existing.pid)) {
       onStaleReclaimed?.(existing);
       try {
