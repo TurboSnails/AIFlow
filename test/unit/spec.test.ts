@@ -110,6 +110,7 @@ test("returns paused/budget_exceeded without writing the output file when the ag
 
     expect(outcome.result).toBe("paused");
     expect(outcome.reason).toBe("budget_exceeded");
+    expect(outcome.usage).toEqual({ inTok: 1, outTok: 1, costUsd: 6 });
     expect(existsSync(join(cwd, "spec.md"))).toBe(false);
   } finally {
     rmSync(runDir, { recursive: true, force: true });

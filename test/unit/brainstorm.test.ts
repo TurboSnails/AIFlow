@@ -179,6 +179,7 @@ test("stops after the first fan-out round if it alone exceeds the budget, withou
 
     expect(outcome.result).toBe("paused");
     expect(outcome.reason).toBe("budget_exceeded");
+    expect(outcome.usage).toEqual({ inTok: 2, outTok: 2, costUsd: 12 });
     expect(callLlm).not.toHaveBeenCalled(); // synthesizer call never happens
   } finally {
     rmSync(runDir, { recursive: true, force: true });

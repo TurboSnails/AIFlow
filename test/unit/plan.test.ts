@@ -99,6 +99,7 @@ test("returns paused/budget_exceeded after a single call that exceeds budget, wi
 
     expect(outcome.result).toBe("paused");
     expect(outcome.reason).toBe("budget_exceeded");
+    expect(outcome.usage).toEqual({ inTok: 1, outTok: 1, costUsd: 6 });
     expect(callLlm).toHaveBeenCalledTimes(1); // no second attempt
   } finally {
     rmSync(runDir, { recursive: true, force: true });
