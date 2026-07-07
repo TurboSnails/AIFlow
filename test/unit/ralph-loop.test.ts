@@ -7,6 +7,7 @@ import { writePrd, readPrd, type Prd } from "../../src/prd";
 import type { RalphLoopStageConfig, ModelProfile } from "../../src/config/schema";
 import { readEvents } from "../../src/events/events";
 import { runRalphLoop } from "../../src/runners/ralph-loop";
+import { createBudgetTracker } from "../../src/gate/budget";
 
 function samplePrd(): Prd {
   return {
@@ -649,6 +650,74 @@ test("unchanged config hash before/after does not revert config or skip the revi
     expect(result.result).toBe("pass");
     expect(runReviewGate).toHaveBeenCalledTimes(1);
     expect(git.checkoutConfigOnly).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runRalphLoopOnce stops before the review gate when the agent call alone exceeds the budget", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 10, outTok: 5, costUsd: 6 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+    const budget = createBudgetTracker(5, 0);
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    }, budget);
+
+    expect(result.result).toBe("paused");
+    expect(runReviewGate).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runRalphLoop stops the loop with reason budget_exceeded once cumulative spend reaches the limit", async () => {
+  const { cwd, runDir } = makeFixtureDirsWith(twoStoryPrd());
+  try {
+    const runAgentTask = alwaysOkAgent({ inTok: 1, outTok: 1, costUsd: 3 });
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+    const budget = createBudgetTracker(5, 0);
+
+    const summary = await runRalphLoop(loopStageConfig(), profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    }, undefined, budget);
+
+    expect(summary.result).toBe("paused");
+    expect(summary.reason).toBe("budget_exceeded");
+    expect(summary.iterations).toBe(2); // US-1 passes at cost 3, US-2's agent call brings total to 6 >= 5 and stops
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runRalphLoop with no budget tracker argument behaves exactly as before (no limit)", async () => {
+  const { cwd, runDir } = makeFixtureDirsWith(samplePrd());
+  try {
+    const runAgentTask = alwaysOkAgent();
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const summary = await runRalphLoop(loopStageConfig(), profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    });
+
+    expect(summary.result).toBe("pass");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });

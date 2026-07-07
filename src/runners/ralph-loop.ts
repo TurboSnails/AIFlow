@@ -8,6 +8,7 @@ import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConf
 import { appendEvent } from "../events/events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
 import type { RalphLoopStopReason } from "../engine/state";
+import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 
 export interface RalphLoopDeps {
   runAgentTask: (task: AgentTask) => Promise<AgentResult>;
@@ -31,7 +32,7 @@ export interface RalphLoopDeps {
 
 export interface RalphLoopResult {
   storyId: string;
-  result: "pass" | "fail" | "suspended";
+  result: "pass" | "fail" | "suspended" | "paused";
   usage: { inTok: number; outTok: number; costUsd: number };
 }
 
@@ -75,7 +76,8 @@ export async function runRalphLoopOnce(
   cwd: string,
   runDir: string,
   specExcerpt: string,
-  deps: RalphLoopDeps = defaultDeps
+  deps: RalphLoopDeps = defaultDeps,
+  budget: BudgetTracker = noopBudgetTracker
 ): Promise<RalphLoopResult> {
   const artifactsDir = join(runDir, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
@@ -108,6 +110,10 @@ export async function runRalphLoopOnce(
     stage: stageConfig.id,
     story: story.id,
   });
+
+  if (agentResult.ok && budget.record(agentResult.usage.costUsd)) {
+    return { storyId: story.id, result: "paused", usage: agentResult.usage };
+  }
 
   if (agentResult.ok && deps.hashConfigDir(cwd) !== configHashBefore) {
     await deps.git.checkoutConfigOnly(cwd);
@@ -145,6 +151,15 @@ export async function runRalphLoopOnce(
   const diff = await deps.git.diffCached(cwd);
 
   const gateOutcome = await deps.runReviewGate(stageConfig.gate, reviewerProfile, cwd, diff, story.acceptance);
+  const totalUsage = {
+    inTok: agentResult.usage.inTok + (gateOutcome.usage?.inTok ?? 0),
+    outTok: agentResult.usage.outTok + (gateOutcome.usage?.outTok ?? 0),
+    costUsd: agentResult.usage.costUsd + (gateOutcome.usage?.costUsd ?? 0),
+  };
+
+  if (gateOutcome.usage && budget.record(gateOutcome.usage.costUsd)) {
+    return { storyId: story.id, result: "paused", usage: totalUsage };
+  }
 
   appendEvent(runDir, {
     ts: new Date().toISOString(),
@@ -165,7 +180,7 @@ export async function runRalphLoopOnce(
     await deps.git.commit(cwd, `feat(${story.id}): ${story.title}`);
     appendFileSync(progressPath, `\n## ${story.id}\n${story.title} — passed checks and AI review.\n`);
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result: "pass" });
-    return { storyId: story.id, result: "pass", usage: agentResult.usage };
+    return { storyId: story.id, result: "pass", usage: totalUsage };
   }
 
   const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
@@ -179,7 +194,7 @@ export async function runRalphLoopOnce(
   const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
   const result = suspended ? "suspended" : "fail";
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
-  return { storyId: story.id, result, usage: agentResult.usage };
+  return { storyId: story.id, result, usage: totalUsage };
 }
 
 export interface RalphLoopSummary {
@@ -247,7 +262,8 @@ export async function runRalphLoop(
   runDir: string,
   specExcerpt: string,
   deps: RalphLoopDeps = defaultDeps,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget: BudgetTracker = noopBudgetTracker
 ): Promise<RalphLoopSummary> {
   const usage = { inTok: 0, outTok: 0, costUsd: 0 };
   let iterations = 0;
@@ -272,10 +288,16 @@ export async function runRalphLoop(
     iterations += 1;
     const suspendedBefore = countStories(prd).suspended;
 
-    const onceResult = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, specExcerpt, deps);
+    const onceResult = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, specExcerpt, deps, budget);
     usage.inTok += onceResult.usage.inTok;
     usage.outTok += onceResult.usage.outTok;
     usage.costUsd += onceResult.usage.costUsd;
+
+    if (onceResult.result === "paused") {
+      const outcome: RalphLoopSummary = { result: "paused", reason: "budget_exceeded", iterations, usage };
+      emitLoopResult(runDir, stageConfig.id, prd, outcome);
+      return outcome;
+    }
 
     const prdAfter = readPrd(prdPath);
     const suspendedAfter = countStories(prdAfter).suspended;

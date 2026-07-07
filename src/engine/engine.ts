@@ -167,6 +167,7 @@ const VALID_STAGE_STOP_REASONS = new Set<string>([
   "stories_suspended",
   "human_gate_timeout",
   "human_gate_rejected",
+  "budget_exceeded",
 ]);
 
 function toStageStopReason(reason: string | undefined): StageStopReason | undefined {
