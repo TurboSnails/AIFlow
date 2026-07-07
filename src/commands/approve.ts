@@ -23,7 +23,8 @@ function pickLatestRun(cwd: string): string | undefined {
 export async function runApprove(
   cwd: string,
   opts: { runId?: string; stage?: string },
-  deps?: EngineDeps
+  deps?: EngineDeps,
+  signal?: AbortSignal
 ): Promise<ApproveResult> {
   const runId = opts.runId ?? pickLatestRun(cwd);
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
@@ -58,7 +59,7 @@ export async function runApprove(
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${state.pipeline}.yaml`));
 
-  const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, undefined, { resume: true });
+  const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, signal, { resume: true });
 
   return { status: "resumed", state: resultState, runId };
 }

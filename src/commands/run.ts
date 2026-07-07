@@ -41,7 +41,8 @@ export async function runCommand(
   cwd: string,
   pipelineName: string,
   overrides: RunCommandOverrides = {},
-  requirementInput: RequirementInput = {}
+  requirementInput: RequirementInput = {},
+  signal?: AbortSignal
 ): Promise<EngineState> {
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
@@ -109,5 +110,5 @@ export async function runCommand(
     },
   };
 
-  return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, engineDeps, undefined, { requirement: requirementText });
+  return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, engineDeps, signal, { requirement: requirementText });
 }

@@ -24,7 +24,8 @@ function pickLatestRun(cwd: string): string | undefined {
 export async function runResume(
   cwd: string,
   opts: { runId?: string; pipeline?: string; force?: boolean },
-  deps?: EngineDeps
+  deps?: EngineDeps,
+  signal?: AbortSignal
 ): Promise<ResumeResult> {
   const runId = opts.runId ?? pickLatestRun(cwd);
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
@@ -47,7 +48,7 @@ export async function runResume(
     cwd,
     runDir,
     deps,
-    undefined,
+    signal,
     { resume: true, force: opts.force ?? false },
   );
 

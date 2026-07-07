@@ -60,17 +60,25 @@ program
     }
     const { runCommand } = await import("./commands/run");
     const { summarizePipelineOutcome } = await import("./engine/engine");
+    const controller = new AbortController();
+    const onSigint = () => controller.abort();
+    process.once("SIGINT", onSigint);
     try {
-      const state = await runCommand(process.cwd(), opts.pipeline, {}, {
-        requirement: opts.requirement,
-        requirementFile: opts.requirementFile,
-      });
+      const state = await runCommand(
+        process.cwd(),
+        opts.pipeline,
+        {},
+        { requirement: opts.requirement, requirementFile: opts.requirementFile },
+        controller.signal
+      );
       const outcome = summarizePipelineOutcome(state);
       console.log(outcome.line);
       process.exitCode = outcome.exitCode;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
+    } finally {
+      process.removeListener("SIGINT", onSigint);
     }
   });
 
@@ -82,20 +90,28 @@ program
   .option("--force", "re-execute stages that already reached a terminal state", false)
   .action(async (opts: { runId?: string; pipeline?: string; force: boolean }) => {
     const { runResume } = await import("./commands/resume");
-    const result = await runResume(process.cwd(), {
-      runId: opts.runId,
-      pipeline: opts.pipeline,
-      force: opts.force,
-    });
-    if (result.status === "no_runs" || result.status === "missing_run_dir") {
-      console.error(result.message ?? "");
-      process.exitCode = 1;
-      return;
+    const controller = new AbortController();
+    const onSigint = () => controller.abort();
+    process.once("SIGINT", onSigint);
+    try {
+      const result = await runResume(
+        process.cwd(),
+        { runId: opts.runId, pipeline: opts.pipeline, force: opts.force },
+        undefined,
+        controller.signal
+      );
+      if (result.status === "no_runs" || result.status === "missing_run_dir") {
+        console.error(result.message ?? "");
+        process.exitCode = 1;
+        return;
+      }
+      const { summarizePipelineOutcome } = await import("./engine/engine");
+      const outcome = summarizePipelineOutcome(result.state!);
+      console.log(`Run ${result.runId}: ${outcome.line}`);
+      process.exitCode = outcome.exitCode;
+    } finally {
+      process.removeListener("SIGINT", onSigint);
     }
-    const { summarizePipelineOutcome } = await import("./engine/engine");
-    const outcome = summarizePipelineOutcome(result.state!);
-    console.log(`Run ${result.runId}: ${outcome.line}`);
-    process.exitCode = outcome.exitCode;
   });
 
 program
@@ -105,16 +121,23 @@ program
   .option("--stage <id>", "target a specific stage (defaults to the sole waiting stage)")
   .action(async (opts: { runId?: string; stage?: string }) => {
     const { runApprove } = await import("./commands/approve");
-    const result = await runApprove(process.cwd(), opts);
-    if (result.status !== "resumed") {
-      console.error(result.message ?? result.status);
-      process.exitCode = 1;
-      return;
+    const controller = new AbortController();
+    const onSigint = () => controller.abort();
+    process.once("SIGINT", onSigint);
+    try {
+      const result = await runApprove(process.cwd(), opts, undefined, controller.signal);
+      if (result.status !== "resumed") {
+        console.error(result.message ?? result.status);
+        process.exitCode = 1;
+        return;
+      }
+      const { summarizePipelineOutcome } = await import("./engine/engine");
+      const outcome = summarizePipelineOutcome(result.state!);
+      console.log(`Run ${result.runId}: ${outcome.line}`);
+      process.exitCode = outcome.exitCode;
+    } finally {
+      process.removeListener("SIGINT", onSigint);
     }
-    const { summarizePipelineOutcome } = await import("./engine/engine");
-    const outcome = summarizePipelineOutcome(result.state!);
-    console.log(`Run ${result.runId}: ${outcome.line}`);
-    process.exitCode = outcome.exitCode;
   });
 
 program

@@ -77,4 +77,33 @@ describe("runResume", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test("runResume stops with a paused stage when given an already-aborted signal", async () => {
+    const cwd = await copyFixture();
+    try {
+      const runId = "20260701_130000_abcd12";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runId,
+          pipeline: "ralph-only",
+          stages: [{ id: "develop", status: "pending" }],
+          cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+        }),
+      );
+      writeFileSync(join(runDir, "prd.json"), JSON.stringify({ branchName: "fix/clamp", stories: [{ id: "US-1", title: "x", acceptance: [], priority: 1, passes: false, fixCount: 0 }] }));
+      mkdirSync(join(cwd, "src"), { recursive: true });
+      writeFileSync(join(cwd, "src", "math.ts"), `export function clamp(value: number, min: number, max: number): number {\n  return value;\n}\n`);
+
+      const controller = new AbortController();
+      controller.abort();
+      const result = await runResume(cwd, { runId }, undefined, controller.signal);
+      expect(result.status).toBe("resumed");
+      expect(result.state!.stages[0].status).toBe("paused");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });

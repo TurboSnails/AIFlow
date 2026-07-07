@@ -77,3 +77,21 @@ test("runCommand does not require --requirement when the pipeline has no brainst
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("runCommand stops with a paused stage when given an already-aborted signal", async () => {
+  const dir = await setupProject(`name: test-pipeline\nstages:\n  - id: plan\n    type: plan\n    model: main-dev\n`);
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    const state = await runCommand(
+      dir,
+      "test-pipeline",
+      { callLlm: async () => ({ text: "unused", usage: { inTok: 0, outTok: 0, costUsd: 0 } }) },
+      {},
+      controller.signal
+    );
+    expect(state.stages[0].status).toBe("paused");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

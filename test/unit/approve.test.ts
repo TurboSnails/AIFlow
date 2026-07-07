@@ -133,3 +133,19 @@ test("resumed pipeline actually continues past the approved stage to the next ru
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("runApprove stops with a paused downstream stage when given an already-aborted signal", async () => {
+  const { cwd, runId } = setupRun([
+    { id: "confirm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+    { id: "develop", status: "pending" },
+  ]);
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runApprove(cwd, { runId }, { runners: {} }, controller.signal);
+    expect(result.status).toBe("resumed");
+    expect(result.state!.stages[1].status).toBe("paused");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
