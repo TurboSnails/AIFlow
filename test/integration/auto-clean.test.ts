@@ -47,7 +47,14 @@ test("auto_clean reverts a dirty working tree after a story is suspended", async
     // reverted, so assert that specifically.
     const status = await $`git -C ${dir} status --porcelain`.text();
     expect(status).not.toContain("clean.txt");
-    expect(status).not.toContain("prd.json");
+    // prd.json IS expected to differ from HEAD here: AIFlow's own bookkeeping
+    // (the story's suspended flag) is deliberately re-persisted after
+    // checkoutClean reverts the working tree, since only the agent's code
+    // changes should be discarded — not the orchestrator's own ledger of
+    // which stories are suspended.
+    expect(status).toContain(" M prd.json");
+    const prd = JSON.parse(readFileSync(join(dir, "prd.json"), "utf-8"));
+    expect(prd.stories[0].suspended).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

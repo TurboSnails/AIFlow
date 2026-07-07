@@ -253,6 +253,7 @@ export async function runRalphLoop(
 
     if (suspendedAfter > suspendedBefore && stageConfig.auto_clean) {
       await deps.git.checkoutClean(cwd);
+      writePrd(prdPath, prdAfter);
       appendEvent(runDir, { ts: new Date().toISOString(), type: "story_auto_cleaned", story: onceResult.storyId });
     }
 

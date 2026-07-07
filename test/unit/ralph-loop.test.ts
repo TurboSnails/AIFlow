@@ -503,6 +503,63 @@ test("runRalphLoop: auto_clean:true calls checkoutClean and emits story_auto_cle
   }
 });
 
+test("runRalphLoop: auto_clean:true does not re-attempt a suspended story forever — the backlog still progresses to the next story", async () => {
+  const { cwd, runDir } = makeFixtureDirsWith(twoStoryPrd());
+  try {
+    const prdPath = join(cwd, "prd.json");
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    // US-1 always fails its gate (suspends after 1 attempt via per_story_fix_limit:1).
+    // US-2 always passes.
+    const runReviewGate = mock(async (config, reviewerProfile, cwdArg, diff, acceptance) => {
+      if (acceptance[0] === "a") {
+        return { checks: "fail" as const, aiReview: "skipped" as const, blockers: 0, checkOutput: "nope" };
+      }
+      return { checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 };
+    });
+
+    // Simulate real git behavior: prd.json is only ever "committed" via the commit()
+    // call (which only fires when a story passes). checkoutClean must therefore revert
+    // prd.json's on-disk content back to whatever it was at the last commit (or the
+    // initial fixture state, if nothing has been committed yet) — exactly like real
+    // `git checkout HEAD -- .` would, since the failure path's writePrd() is never
+    // committed.
+    let committedSnapshot = readFileSync(prdPath, "utf-8");
+    const commit = mock(async () => {
+      committedSnapshot = readFileSync(prdPath, "utf-8");
+    });
+    const checkoutClean = mock(async () => {
+      writeFileSync(prdPath, committedSnapshot);
+    });
+    const git = { ...fixedGit(), commit, checkoutClean };
+
+    const summary = await runRalphLoop(
+      loopStageConfig({ per_story_fix_limit: 1, stall_limit: 100, max_iterations: 10, auto_clean: true }),
+      profiles,
+      cwd,
+      runDir,
+      "spec excerpt",
+      { runAgentTask, runReviewGate, git }
+    );
+
+    expect(checkoutClean).toHaveBeenCalledTimes(1);
+    // Without the fix, checkoutClean silently reverts prd.json's suspended flag back to
+    // pending, so US-1 gets re-selected forever and US-2 is never touched — the loop
+    // runs until max_iterations (10) with runAgentTask called 10 times, all for US-1.
+    expect(runAgentTask.mock.calls.length).toBeGreaterThan(1);
+    expect(summary.result).toBe("suspended");
+    expect(summary.reason).toBe("stories_suspended");
+
+    const prd = readPrd(prdPath);
+    const us1 = prd.stories.find((s) => s.id === "US-1")!;
+    const us2 = prd.stories.find((s) => s.id === "US-2")!;
+    expect(us1.suspended).toBe(true);
+    expect(us2.passes).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runRalphLoop: auto_clean:false (default) never calls checkoutClean even when a story is suspended", async () => {
   const { cwd, runDir } = makeFixtureDirsWith(samplePrd());
   try {
