@@ -604,10 +604,9 @@ test("a config file changed by the agent mid-iteration fails the gate, reverts t
       hashCall += 1;
       return hashCall === 1 ? "hash-before" : "hash-after-different";
     });
-    const checkoutConfigOnly = mock(async () => {});
     const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
     const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
-    const git = { ...fixedGit(), checkoutConfigOnly };
+    const git = fixedGit();
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
       runAgentTask,
@@ -618,7 +617,7 @@ test("a config file changed by the agent mid-iteration fails the gate, reverts t
 
     expect(result.result).toBe("fail");
     expect(runReviewGate).not.toHaveBeenCalled();
-    expect(checkoutConfigOnly).toHaveBeenCalledWith(cwd);
+    expect(git.checkoutConfigOnly).toHaveBeenCalledWith(cwd);
     const prd = readPrd(join(cwd, "prd.json"));
     expect(prd.stories[0].fixCount).toBe(1);
     const fixList = readFileSync(join(runDir, "artifacts", "fix_list.md"), "utf-8");
@@ -636,10 +635,9 @@ test("unchanged config hash before/after does not revert config or skip the revi
   const { cwd, runDir } = makeFixtureDirs();
   try {
     const hashConfigDir = mock(() => "same-hash-always");
-    const checkoutConfigOnly = mock(async () => {});
     const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
     const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
-    const git = { ...fixedGit(), checkoutConfigOnly };
+    const git = fixedGit();
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
       runAgentTask,
@@ -650,7 +648,7 @@ test("unchanged config hash before/after does not revert config or skip the revi
 
     expect(result.result).toBe("pass");
     expect(runReviewGate).toHaveBeenCalledTimes(1);
-    expect(checkoutConfigOnly).not.toHaveBeenCalled();
+    expect(git.checkoutConfigOnly).not.toHaveBeenCalled();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
