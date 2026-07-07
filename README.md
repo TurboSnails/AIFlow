@@ -98,6 +98,19 @@ profiles:
 
 A `full-auto` pipeline (`brainstorm → spec → confirm-spec(human_gate) → plan → develop(ralph_loop)`) is a typical composition of these.
 
+### Bundled pipeline templates
+
+`aiflow init` scaffolds four ready-to-run pipelines into `.aiflow/config/pipelines/`, each approximating a different development methodology using the stage types above. Pick one with `aiflow run --pipeline <name>`:
+
+| Template | Stages | Approximates |
+| --- | --- | --- |
+| `ralph-only` | `ralph_loop` | Just the implement/gate/commit loop, against a hand-authored `spec.md`/`prd.json` |
+| `superpowers` | `brainstorm → spec → human_gate → plan → ralph_loop` | This repo's own brainstorm→spec→plan→execute→review workflow |
+| `spec-superflow` | `brainstorm → spec → human_gate → plan → ralph_loop` | Same stage topology as `superpowers` (AIFlow has no dedicated stage for its execution-contract bridging layer or forced debug protocol), different stage IDs/prompts reflecting its own vocabulary |
+| `openspec` | `spec → plan → ralph_loop` | The leanest one — no `brainstorm`, no `human_gate`, matching OpenSpec's "lightweight, no mandatory gates" philosophy |
+
+`superpowers`/`spec-superflow`/`openspec` all start with a `brainstorm` or `spec` stage, so they need `aiflow run --pipeline <name> --requirement "..."` (or `--requirement-file`) — see `docs/superpowers/specs/2026-07-07-workflow-pipeline-templates-design.md` for the full methodology research and what each template deliberately does not attempt to replicate from the original tools.
+
 A `ralph_loop` stage keeps selecting the highest-priority pending story from `prd.json` and retrying until every story is done or suspended, until `max_iterations` (default 10) is reached, or until `stall_limit` (default 3) consecutive iterations make no progress. A story that fails more than `per_story_fix_limit` (default 3) times is marked `suspended` in `prd.json` and skipped in favor of the next pending story — it does not stop the whole stage. When a stage stops without finishing every story, `state.json`'s `stages[i].reason` (and the corresponding `ralph_loop_result` event in `events.jsonl`) records why: `"max_iterations"`, `"stall"`, or `"stories_suspended"`.
 
 ### How to find the right model id and base_url
@@ -173,6 +186,8 @@ test/
 The first vertical slice (Tasks 1–18 of the implementation plan in `docs/superpowers/plans/2026-07-05-aiflow-cli-ralph-slice-plan.md`) shipped `ralph-only` end-to-end: real event stream ingestion, deterministic + AI review gate, git commit, monitor, and report, against a real OpenCode agent and a real reviewer API.
 
 A subsequent plan (`docs/superpowers/specs/2026-07-06-multi-stage-pipeline-runners-design.md`) added multi-stage pipeline support: the `brainstorm`, `spec`, `plan`, and `human_gate` stage types, `aiflow approve`/`aiflow reject`, and `run --requirement`/`--requirement-file`. Pipelines can now compose any ordered mix of these stage types alongside `ralph_loop`, and `aiflow resume` picks up an in-flight or aborted run from any stage.
+
+A follow-up (`docs/superpowers/specs/2026-07-07-workflow-pipeline-templates-design.md`) added the `superpowers`/`spec-superflow`/`openspec` pipeline templates to `aiflow init`, alongside the existing `ralph-only`.
 
 Not yet implemented: budget tracking/auto-pause on `budget.max_cost_usd`, re-running a prior stage after a `human_gate` rejection (reject currently just aborts the pipeline), and `doctor` connectivity checks for the newer profile/stage types — see `docs/superpowers/` for the full roadmap.
 
