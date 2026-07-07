@@ -29,7 +29,7 @@ const PROJECT_YAML_TEMPLATE = `{}
 `;
 
 const TEMPLATES_DIR = join(import.meta.dir, "init-templates");
-const PIPELINE_TEMPLATE_NAMES = ["ralph-only", "superpowers", "spec-superflow", "openspec"];
+export const PIPELINE_TEMPLATE_NAMES: string[] = ["ralph-only", "superpowers", "spec-superflow", "openspec"];
 
 export function runInit(cwd: string): InitResult {
   const configDir = join(cwd, ".aiflow", "config");

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { loadPipelineConfig } from "../../src/config/loader";
-import { runInit } from "../../src/commands/init";
+import { runInit, PIPELINE_TEMPLATE_NAMES } from "../../src/commands/init";
 import { loadModelsConfig } from "../../src/config/loader";
 import type { PipelineConfig } from "../../src/config/schema";
 
@@ -53,7 +53,7 @@ test("every profile referenced by a bundled pipeline template exists in the defa
       }
     }
 
-    for (const templateName of ["ralph-only", "superpowers", "spec-superflow", "openspec"]) {
+    for (const templateName of PIPELINE_TEMPLATE_NAMES) {
       const pipeline = loadPipelineConfig(join(TEMPLATES_DIR, `${templateName}.yaml`));
       for (const stage of pipeline.stages) assertStageProfilesKnown(stage);
     }
