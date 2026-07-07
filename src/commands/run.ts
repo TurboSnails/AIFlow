@@ -15,7 +15,7 @@ import {
   callLlm as realCallLlm,
   callLlmFanOut as realCallLlmFanOut,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, commit, checkoutClean } from "../git";
+import { revParseHead, stageAll, diffCached, commit, checkoutClean, isClean } from "../git";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -54,6 +54,13 @@ export async function runCommand(
   if (needsRequirement && !requirementText) {
     throw new Error(
       `Pipeline "${pipelineName}" requires --requirement or --requirement-file (it contains a brainstorm or spec stage)`
+    );
+  }
+
+  const hasAutoClean = pipelineConfig.stages.some((s) => s.type === "ralph_loop" && s.auto_clean);
+  if (hasAutoClean && !(await isClean(cwd))) {
+    throw new Error(
+      `Pipeline "${pipelineName}" has auto_clean enabled on a ralph_loop stage, but the working tree at ${cwd} is not clean. Commit or stash your changes before running (auto_clean cannot distinguish your uncommitted work from a failed agent attempt).`
     );
   }
 

@@ -95,3 +95,48 @@ test("runCommand stops with a paused stage when given an already-aborted signal"
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("runCommand refuses to start when a ralph_loop stage has auto_clean:true and the working tree is dirty", async () => {
+  const dir = await setupProject(
+    `name: test-pipeline\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    auto_clean: true\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+  );
+  try {
+    writeFileSync(join(dir, "dirty.txt"), "uncommitted\n");
+    await expect(runCommand(dir, "test-pipeline")).rejects.toThrow(/auto_clean.*not clean/i);
+    expect(existsSync(join(dir, ".aiflow", "runs"))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runCommand starts normally when a ralph_loop stage has auto_clean:true and the working tree is clean", async () => {
+  const dir = await setupProject(
+    `name: test-pipeline\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    auto_clean: true\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+  );
+  try {
+    writeFileSync(join(dir, "prd.json"), JSON.stringify({ branchName: "x", stories: [] }));
+    // Commit prd.json so the tree is actually clean for the auto_clean preflight check —
+    // leaving it untracked would (correctly) trip the guard, since auto_clean's `git clean -fd`
+    // would delete an untracked prd.json just as readily as any other stray file.
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "add prd.json"`;
+    const state = await runCommand(dir, "test-pipeline");
+    expect(state.stages[0].status).toBe("done");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runCommand starts normally when the working tree is dirty but no stage has auto_clean:true", async () => {
+  const dir = await setupProject(
+    `name: test-pipeline\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+  );
+  try {
+    writeFileSync(join(dir, "dirty.txt"), "uncommitted\n");
+    writeFileSync(join(dir, "prd.json"), JSON.stringify({ branchName: "x", stories: [] }));
+    const state = await runCommand(dir, "test-pipeline");
+    expect(state.stages[0].status).toBe("done");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
