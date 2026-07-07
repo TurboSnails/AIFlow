@@ -85,6 +85,12 @@ export interface HumanGateRejectedAiflowEvent {
   reason?: string;
 }
 
+export interface StoryAutoCleanedAiflowEvent {
+  ts: string;
+  type: "story_auto_cleaned";
+  story: string;
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
@@ -95,7 +101,8 @@ export type AiflowEvent =
   | SpecResultAiflowEvent
   | PlanResultAiflowEvent
   | HumanGateWaitingAiflowEvent
-  | HumanGateRejectedAiflowEvent;
+  | HumanGateRejectedAiflowEvent
+  | StoryAutoCleanedAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");

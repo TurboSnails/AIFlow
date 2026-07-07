@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { revParseHead, stageAll, diffCached, commit } from "../../src/git";
+import { revParseHead, stageAll, diffCached, commit, isClean, checkoutClean } from "../../src/git";
 
 async function makeTempRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-git-test-"));
@@ -50,6 +50,52 @@ test("commit creates a new commit with the given message on top of HEAD", async 
     expect(after).not.toBe(before);
     const log = await $`git -C ${dir} log -1 --pretty=%s`.text();
     expect(log.trim()).toBe("feat: add c.txt");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("isClean returns true for a freshly-committed repo and false after an edit", async () => {
+  const dir = await makeTempRepo();
+  try {
+    expect(await isClean(dir)).toBe(true);
+    writeFileSync(join(dir, "a.txt"), "changed\n");
+    expect(await isClean(dir)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("isClean returns false when there's an untracked file", async () => {
+  const dir = await makeTempRepo();
+  try {
+    writeFileSync(join(dir, "untracked.txt"), "new\n");
+    expect(await isClean(dir)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkoutClean discards a modification to a tracked file", async () => {
+  const dir = await makeTempRepo();
+  try {
+    writeFileSync(join(dir, "a.txt"), "changed\n");
+    await checkoutClean(dir);
+    expect(await isClean(dir)).toBe(true);
+    const content = await Bun.file(join(dir, "a.txt")).text();
+    expect(content).toBe("hello\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkoutClean removes an untracked file", async () => {
+  const dir = await makeTempRepo();
+  try {
+    writeFileSync(join(dir, "untracked.txt"), "new\n");
+    await checkoutClean(dir);
+    expect(await isClean(dir)).toBe(true);
+    expect(await Bun.file(join(dir, "untracked.txt")).exists()).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

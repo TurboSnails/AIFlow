@@ -22,6 +22,7 @@ const stageConfig: RalphLoopStageConfig = {
   per_story_fix_limit: 3,
   max_iterations: 10,
   stall_limit: 3,
+  auto_clean: false,
   gate: {
     checks: ["true"],
     ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] },
@@ -65,6 +66,7 @@ function loopStageConfig(overrides: Partial<RalphLoopStageConfig> = {}): RalphLo
     per_story_fix_limit: 3,
     max_iterations: 10,
     stall_limit: 3,
+    auto_clean: false,
     gate: { checks: ["true"], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } },
     ...overrides,
   };
@@ -80,6 +82,7 @@ function fixedGit() {
     stageAll: mock(async () => {}),
     diffCached: mock(async () => "diff content"),
     commit: mock(async () => {}),
+    checkoutClean: mock(async () => {}),
   };
 }
 
@@ -97,6 +100,7 @@ test("a passing gate marks the story passed, commits, and writes progress.md", a
       stageAll: mock(async () => {}),
       diffCached: mock(async () => "diff content"),
       commit: mock(async () => {}),
+      checkoutClean: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
@@ -135,6 +139,7 @@ test("a failing gate records fix_list.md, increments fixCount, and does not comm
       stageAll: mock(async () => {}),
       diffCached: mock(async () => "diff content"),
       commit: mock(async () => {}),
+      checkoutClean: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
@@ -170,6 +175,7 @@ test("an agent task that fails (ok:false) is treated as a failed iteration witho
       stageAll: mock(async () => {}),
       diffCached: mock(async () => ""),
       commit: mock(async () => {}),
+      checkoutClean: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
@@ -465,6 +471,56 @@ test("runRalphLoop: a second call against the same cwd resumes — already-done/
     const afterSecond = readPrd(join(cwd, "prd.json"));
     expect(afterSecond.stories[0].passes).toBe(true);
     expect(afterSecond.stories[1].passes).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runRalphLoop: auto_clean:true calls checkoutClean and emits story_auto_cleaned when a story is suspended", async () => {
+  const { cwd, runDir } = makeFixtureDirsWith(samplePrd());
+  try {
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "fail" as const, aiReview: "skipped" as const, blockers: 0, checkOutput: "nope" }));
+    const checkoutClean = mock(async () => {});
+    const git = { ...fixedGit(), checkoutClean };
+
+    await runRalphLoop(
+      loopStageConfig({ per_story_fix_limit: 1, auto_clean: true }),
+      profiles,
+      cwd,
+      runDir,
+      "spec excerpt",
+      { runAgentTask, runReviewGate, git }
+    );
+
+    expect(checkoutClean).toHaveBeenCalledWith(cwd);
+    const events = readEvents(runDir);
+    expect(events.some((e) => e.type === "story_auto_cleaned")).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runRalphLoop: auto_clean:false (default) never calls checkoutClean even when a story is suspended", async () => {
+  const { cwd, runDir } = makeFixtureDirsWith(samplePrd());
+  try {
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "fail" as const, aiReview: "skipped" as const, blockers: 0, checkOutput: "nope" }));
+    const checkoutClean = mock(async () => {});
+    const git = { ...fixedGit(), checkoutClean };
+
+    await runRalphLoop(
+      loopStageConfig({ per_story_fix_limit: 1 }),
+      profiles,
+      cwd,
+      runDir,
+      "spec excerpt",
+      { runAgentTask, runReviewGate, git }
+    );
+
+    expect(checkoutClean).not.toHaveBeenCalled();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });

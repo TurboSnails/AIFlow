@@ -3,7 +3,7 @@ import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story, type Prd } from "../prd";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate, type ReviewGateOutcome } from "../gate/review-gate";
-import { revParseHead, stageAll, diffCached, commit } from "../git";
+import { revParseHead, stageAll, diffCached, commit, checkoutClean } from "../git";
 import { appendEvent } from "../events/events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
 import type { RalphLoopStopReason } from "../engine/state";
@@ -22,6 +22,7 @@ export interface RalphLoopDeps {
     stageAll: typeof stageAll;
     diffCached: typeof diffCached;
     commit: typeof commit;
+    checkoutClean: typeof checkoutClean;
   };
 }
 
@@ -35,7 +36,7 @@ const defaultDeps: RalphLoopDeps = {
   runAgentTask: realRunAgentTask,
   runReviewGate: (config, reviewerProfile, cwd, diff, acceptance) =>
     realRunReviewGate(config, reviewerProfile, cwd, diff, acceptance),
-  git: { revParseHead, stageAll, diffCached, commit },
+  git: { revParseHead, stageAll, diffCached, commit, checkoutClean },
 };
 
 export function renderPrompt(story: Story, specExcerpt: string, progressTail: string, fixListContent: string): string {
@@ -248,6 +249,12 @@ export async function runRalphLoop(
     usage.costUsd += onceResult.usage.costUsd;
 
     const prdAfter = readPrd(prdPath);
+    const suspendedAfter = countStories(prdAfter).suspended;
+
+    if (suspendedAfter > suspendedBefore && stageConfig.auto_clean) {
+      await deps.git.checkoutClean(cwd);
+      appendEvent(runDir, { ts: new Date().toISOString(), type: "story_auto_cleaned", story: onceResult.storyId });
+    }
 
     if (selectNextStory(prdAfter) === null) {
       const outcome = finalizeOutcome(prdAfter, iterations, usage);
@@ -261,7 +268,6 @@ export async function runRalphLoop(
       return outcome;
     }
 
-    const suspendedAfter = countStories(prdAfter).suspended;
     const progressed = onceResult.result === "pass" || suspendedAfter > suspendedBefore;
     stallCount = progressed ? 0 : stallCount + 1;
 

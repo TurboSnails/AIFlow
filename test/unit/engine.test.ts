@@ -17,6 +17,7 @@ const pipeline: PipelineConfig = {
       per_story_fix_limit: 3,
       max_iterations: 10,
       stall_limit: 3,
+      auto_clean: false,
       gate: { checks: [], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } },
     },
   ],

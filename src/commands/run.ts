@@ -15,7 +15,7 @@ import {
   callLlm as realCallLlm,
   callLlmFanOut as realCallLlmFanOut,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, commit } from "../git";
+import { revParseHead, stageAll, diffCached, commit, checkoutClean } from "../git";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -90,7 +90,7 @@ export async function runCommand(
                 runChecks,
                 callReviewer: reviewerCallFn,
               }),
-            git: { revParseHead, stageAll, diffCached, commit },
+            git: { revParseHead, stageAll, diffCached, commit, checkoutClean },
           },
           signal
         );
