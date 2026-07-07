@@ -42,7 +42,8 @@ export async function runCommand(
   pipelineName: string,
   overrides: RunCommandOverrides = {},
   requirementInput: RequirementInput = {},
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  runId: string = createRunId()
 ): Promise<EngineState> {
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
@@ -64,7 +65,6 @@ export async function runCommand(
     );
   }
 
-  const runId = createRunId();
   const runDir = join(cwd, ".aiflow", "runs", runId);
   mkdirSync(runDir, { recursive: true });
 

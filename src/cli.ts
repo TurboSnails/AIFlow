@@ -59,9 +59,28 @@ program
       return;
     }
     const { runCommand } = await import("./commands/run");
-    const { summarizePipelineOutcome } = await import("./engine/engine");
+    const { summarizePipelineOutcome, createRunId } = await import("./engine/engine");
+    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
+    process.once("SIGINT", onSigint);
+    const runId = createRunId();
+    let lock;
+    try {
+      lock = await acquireRunLock(process.cwd(), runId, {
+        signal: controller.signal,
+        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+      });
+    } catch (err) {
+      if (err instanceof LockWaitAbortedError) {
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    } finally {
+      process.removeListener("SIGINT", onSigint);
+    }
     process.once("SIGINT", onSigint);
     try {
       const state = await runCommand(
@@ -69,7 +88,8 @@ program
         opts.pipeline,
         {},
         { requirement: opts.requirement, requirementFile: opts.requirementFile },
-        controller.signal
+        controller.signal,
+        runId
       );
       const outcome = summarizePipelineOutcome(state);
       console.log(outcome.line);
@@ -78,6 +98,7 @@ program
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
     } finally {
+      lock.release();
       process.removeListener("SIGINT", onSigint);
     }
   });
@@ -88,15 +109,31 @@ program
   .option("--run-id <id>", "resume a specific run (defaults to latest)")
   .option("--pipeline <name>", "override the pipeline name read from state.json")
   .option("--force", "re-execute stages that already reached a terminal state", false)
-  .action(async (opts: { runId?: string; pipeline?: string; force: boolean }) => {
+  .option("--raise-budget <n>", "raise the pipeline's budget.max_cost_usd to this value before resuming", (v) => Number(v))
+  .action(async (opts: { runId?: string; pipeline?: string; force: boolean; raiseBudget?: number }) => {
     const { runResume } = await import("./commands/resume");
+    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
+    let lock;
     process.once("SIGINT", onSigint);
+    try {
+      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-resume", {
+        signal: controller.signal,
+        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+      });
+    } catch (err) {
+      if (err instanceof LockWaitAbortedError) {
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
     try {
       const result = await runResume(
         process.cwd(),
-        { runId: opts.runId, pipeline: opts.pipeline, force: opts.force },
+        { runId: opts.runId, pipeline: opts.pipeline, force: opts.force, raiseBudget: opts.raiseBudget },
         undefined,
         controller.signal
       );
@@ -110,6 +147,7 @@ program
       console.log(`Run ${result.runId}: ${outcome.line}`);
       process.exitCode = outcome.exitCode;
     } finally {
+      lock.release();
       process.removeListener("SIGINT", onSigint);
     }
   });
@@ -121,9 +159,24 @@ program
   .option("--stage <id>", "target a specific stage (defaults to the sole waiting stage)")
   .action(async (opts: { runId?: string; stage?: string }) => {
     const { runApprove } = await import("./commands/approve");
+    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
+    let lock;
     process.once("SIGINT", onSigint);
+    try {
+      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-approve", {
+        signal: controller.signal,
+        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+      });
+    } catch (err) {
+      if (err instanceof LockWaitAbortedError) {
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
     try {
       const result = await runApprove(process.cwd(), opts, undefined, controller.signal);
       if (result.status !== "resumed") {
@@ -136,6 +189,7 @@ program
       console.log(`Run ${result.runId}: ${outcome.line}`);
       process.exitCode = outcome.exitCode;
     } finally {
+      lock.release();
       process.removeListener("SIGINT", onSigint);
     }
   });
@@ -148,15 +202,33 @@ program
   .option("--reason <text>", "reason recorded in events.jsonl")
   .action(async (opts: { runId?: string; stage?: string; reason?: string }) => {
     const { runReject } = await import("./commands/reject");
-    const result = runReject(process.cwd(), opts);
-    if (result.status !== "rejected") {
-      console.error(result.message ?? result.status);
-      process.exitCode = 1;
-      return;
+    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
+    let lock;
+    try {
+      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-reject", {
+        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+      });
+    } catch (err) {
+      if (err instanceof LockWaitAbortedError) {
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
     }
-    const rejectedStage = result.state!.stages.find((s) => s.status === "aborted");
-    console.log(`Run ${result.runId}: stage ${rejectedStage?.id} rejected`);
-    process.exitCode = 1;
+    try {
+      const result = runReject(process.cwd(), opts);
+      if (result.status !== "rejected") {
+        console.error(result.message ?? result.status);
+        process.exitCode = 1;
+        return;
+      }
+      const rejectedStage = result.state!.stages.find((s) => s.status === "aborted");
+      console.log(`Run ${result.runId}: stage ${rejectedStage?.id} rejected`);
+      process.exitCode = 1;
+    } finally {
+      lock.release();
+    }
   });
 
 program
