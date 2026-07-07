@@ -15,6 +15,7 @@ import {
   callReviewer as realCallReviewer,
   callLlm as realCallLlm,
   callLlmFanOut as realCallLlmFanOut,
+  type ReviewerCallResult,
 } from "../llm/client";
 import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly, isClean } from "../git";
 import type { EngineState } from "../engine/state";
@@ -28,7 +29,7 @@ import type {
 
 export interface RunCommandOverrides {
   runAgentTask?: (task: AgentTask) => Promise<AgentResult>;
-  callReviewer?: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
+  callReviewer?: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
   callLlm?: typeof realCallLlm;
   callLlmFanOut?: typeof realCallLlmFanOut;
 }

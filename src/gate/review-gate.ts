@@ -1,5 +1,5 @@
 import { runChecks as realRunChecks, type CheckResult } from "./check-runner";
-import { callReviewer as realCallReviewer } from "../llm/client";
+import { callReviewer as realCallReviewer, type ReviewerCallResult } from "../llm/client";
 import { ReviewOutputSchema, type ReviewOutput } from "./review-schema";
 import type { ReviewGateConfig, ModelProfile } from "../config/schema";
 
@@ -16,7 +16,7 @@ export interface ReviewGateOutcome {
 
 export interface ReviewGateDeps {
   runChecks: (commands: string[], cwd: string) => Promise<CheckResult>;
-  callReviewer: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
+  callReviewer: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
 }
 
 const defaultDeps: ReviewGateDeps = { runChecks: realRunChecks, callReviewer: realCallReviewer };

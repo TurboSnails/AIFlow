@@ -34,7 +34,7 @@ test("checks passing and AI review returning no fail_on-severity issues passes t
       summary: "looks fine",
       issues: [{ severity: "minor", file: "a.ts", line: 1, title: "t", detail: "d", suggestion: "s" }],
     },
-    usage: { inTok: 0, outTok: 0, costUsd: 0 },
+    usage: { inTok: 10, outTok: 5, costUsd: 0.001 },
   }));
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
@@ -43,6 +43,7 @@ test("checks passing and AI review returning no fail_on-severity issues passes t
   expect(outcome.checks).toBe("pass");
   expect(outcome.aiReview).toBe("pass");
   expect(outcome.blockers).toBe(0);
+  expect(outcome.usage).toEqual({ inTok: 10, outTok: 5, costUsd: 0.001 });
 });
 
 test("checks passing but AI review returning a blocker fails the gate", async () => {
@@ -67,7 +68,7 @@ test("checks passing and AI review parse failure with strict:false falls back to
   let callCount = 0;
   const callReviewer = mock(async () => {
     callCount++;
-    return { data: { not: "valid shape" }, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    return { data: { not: "valid shape" }, usage: { inTok: callCount, outTok: callCount * 2, costUsd: callCount * 0.001 } };
   });
   const outcome = await runReviewGate(baseConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
     runChecks,
@@ -75,6 +76,7 @@ test("checks passing and AI review parse failure with strict:false falls back to
   });
   expect(callCount).toBe(2);
   expect(outcome.aiReview).toBe("pass");
+  expect(outcome.usage).toEqual({ inTok: 3, outTok: 6, costUsd: 0.003 });
 });
 
 test("checks passing and AI review parse failure with strict:true fails the gate after one retry", async () => {
@@ -82,7 +84,7 @@ test("checks passing and AI review parse failure with strict:true fails the gate
   let callCount = 0;
   const callReviewer = mock(async () => {
     callCount++;
-    return { data: { not: "valid shape" }, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    return { data: { not: "valid shape" }, usage: { inTok: callCount, outTok: callCount * 2, costUsd: callCount * 0.001 } };
   });
   const strictConfig: ReviewGateConfig = { ...baseConfig, ai_review: { ...baseConfig.ai_review, strict: true } };
   const outcome = await runReviewGate(strictConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], {
@@ -91,4 +93,5 @@ test("checks passing and AI review parse failure with strict:true fails the gate
   });
   expect(callCount).toBe(2);
   expect(outcome.aiReview).toBe("fail");
+  expect(outcome.usage).toEqual({ inTok: 3, outTok: 6, costUsd: 0.003 });
 });

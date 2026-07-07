@@ -1,4 +1,4 @@
-import { callReviewer as realCallReviewer } from "../llm/client";
+import { callReviewer as realCallReviewer, type ReviewerCallResult } from "../llm/client";
 import type { ModelProfile } from "../config/schema";
 
 export interface DoctorReport {
@@ -12,7 +12,7 @@ export interface DoctorReport {
 export interface DoctorDeps {
   checkOpenCodeVersion: () => Promise<string | null>;
   checkGitRepo: (cwd: string) => Promise<boolean>;
-  callReviewer: (profile: ModelProfile, prompt: string) => Promise<{ data: unknown; usage: { inTok: number; outTok: number; costUsd: number } }>;
+  callReviewer: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
 }
 
 export async function checkOpenCodeVersionReal(): Promise<string | null> {
