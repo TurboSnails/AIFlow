@@ -28,6 +28,7 @@ export interface GateResultAiflowEvent {
   checks: "pass" | "fail";
   ai_review: "pass" | "fail" | "skipped";
   blockers: number;
+  reason?: "config_tampered";
 }
 
 export interface StoryResultAiflowEvent {

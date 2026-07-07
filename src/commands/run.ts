@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
+import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
 import { createRunId, runPipelineOnce, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
 import { runBrainstormStage } from "../runners/brainstorm";
@@ -15,7 +16,7 @@ import {
   callLlm as realCallLlm,
   callLlmFanOut as realCallLlmFanOut,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, commit, checkoutClean, isClean } from "../git";
+import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly, isClean } from "../git";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -97,7 +98,8 @@ export async function runCommand(
                 runChecks,
                 callReviewer: reviewerCallFn,
               }),
-            git: { revParseHead, stageAll, diffCached, commit, checkoutClean },
+            git: { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly },
+            hashConfigDir: realHashConfigDir,
           },
           signal
         );

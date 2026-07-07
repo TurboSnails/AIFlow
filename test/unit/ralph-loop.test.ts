@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runRalphLoopOnce } from "../../src/runners/ralph-loop";
@@ -37,6 +37,7 @@ const profiles: Record<string, ModelProfile> = {
 function makeFixtureDirs() {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-ralph-cwd-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-ralph-run-"));
+  mkdirSync(join(cwd, ".aiflow", "config"), { recursive: true });
   writePrd(join(cwd, "prd.json"), samplePrd());
   return { cwd, runDir };
 }
@@ -54,6 +55,7 @@ function twoStoryPrd(): Prd {
 function makeFixtureDirsWith(prd: Prd) {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-ralph-cwd-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-ralph-run-"));
+  mkdirSync(join(cwd, ".aiflow", "config"), { recursive: true });
   writePrd(join(cwd, "prd.json"), prd);
   return { cwd, runDir };
 }
@@ -83,6 +85,7 @@ function fixedGit() {
     diffCached: mock(async () => "diff content"),
     commit: mock(async () => {}),
     checkoutClean: mock(async () => {}),
+    checkoutConfigOnly: mock(async () => {}),
   };
 }
 
@@ -101,12 +104,14 @@ test("a passing gate marks the story passed, commits, and writes progress.md", a
       diffCached: mock(async () => "diff content"),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
+      checkoutConfigOnly: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(result).toEqual({ storyId: "US-1", result: "pass", usage: { inTok: 10, outTok: 5, costUsd: 0.001 } });
@@ -140,12 +145,14 @@ test("a failing gate records fix_list.md, increments fixCount, and does not comm
       diffCached: mock(async () => "diff content"),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
+      checkoutConfigOnly: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(result).toEqual({ storyId: "US-1", result: "fail", usage: { inTok: 10, outTok: 5, costUsd: 0.001 } });
@@ -176,12 +183,14 @@ test("an agent task that fails (ok:false) is treated as a failed iteration witho
       diffCached: mock(async () => ""),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
+      checkoutConfigOnly: mock(async () => {}),
     };
 
     const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(result).toEqual({ storyId: "US-1", result: "fail", usage: { inTok: 0, outTok: 0, costUsd: 0 } });
@@ -203,6 +212,7 @@ test("runRalphLoop: all stories pass in sequence returns pass with no reason", a
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(summary.result).toBe("pass");
@@ -248,6 +258,7 @@ test("runRalphLoop: usage accumulates precisely across iterations with differing
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(summary.iterations).toBe(2);
@@ -276,7 +287,7 @@ test("runRalphLoop: a story that exceeds per_story_fix_limit is skipped, the oth
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(summary.result).toBe("suspended");
@@ -308,7 +319,7 @@ test("runRalphLoop: stall_limit stops the loop before per_story_fix_limit when c
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(summary.result).toBe("suspended");
@@ -337,7 +348,7 @@ test("runRalphLoop: max_iterations stops the loop when neither stall_limit nor p
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(summary.result).toBe("suspended");
@@ -360,6 +371,7 @@ test("runRalphLoop: an empty prd (no stories) returns pass immediately without c
       runAgentTask,
       runReviewGate,
       git,
+      hashConfigDir: mock(() => "same-hash"),
     });
 
     expect(summary.result).toBe("pass");
@@ -387,7 +399,7 @@ test("runRalphLoop: an already-aborted signal returns aborted immediately withou
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git },
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") },
       controller.signal
     );
 
@@ -419,7 +431,7 @@ test("runRalphLoop: a signal aborted mid-run stops before the next iteration's a
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git },
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") },
       controller.signal
     );
 
@@ -446,7 +458,7 @@ test("runRalphLoop: a second call against the same cwd resumes — already-done/
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate: failingGate, git }
+      { runAgentTask, runReviewGate: failingGate, git, hashConfigDir: mock(() => "same-hash") }
     );
     expect(first.result).toBe("suspended");
     expect(first.reason).toBe("max_iterations");
@@ -463,7 +475,7 @@ test("runRalphLoop: a second call against the same cwd resumes — already-done/
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate: passingGate, git }
+      { runAgentTask, runReviewGate: passingGate, git, hashConfigDir: mock(() => "same-hash") }
     );
     expect(second.result).toBe("pass");
     expect(second.iterations).toBe(2); // US-1 (still pending from before) + US-2, not US-1 redone from scratch
@@ -491,7 +503,7 @@ test("runRalphLoop: auto_clean:true calls checkoutClean and emits story_auto_cle
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(checkoutClean).toHaveBeenCalledWith(cwd);
@@ -538,7 +550,7 @@ test("runRalphLoop: auto_clean:true does not re-attempt a suspended story foreve
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(checkoutClean).toHaveBeenCalledTimes(1);
@@ -574,10 +586,71 @@ test("runRalphLoop: auto_clean:false (default) never calls checkoutClean even wh
       cwd,
       runDir,
       "spec excerpt",
-      { runAgentTask, runReviewGate, git }
+      { runAgentTask, runReviewGate, git, hashConfigDir: mock(() => "same-hash") }
     );
 
     expect(checkoutClean).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("a config file changed by the agent mid-iteration fails the gate, reverts the config, and does not call the review gate", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    let hashCall = 0;
+    const hashConfigDir = mock(() => {
+      hashCall += 1;
+      return hashCall === 1 ? "hash-before" : "hash-after-different";
+    });
+    const checkoutConfigOnly = mock(async () => {});
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = { ...fixedGit(), checkoutConfigOnly };
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir,
+    });
+
+    expect(result.result).toBe("fail");
+    expect(runReviewGate).not.toHaveBeenCalled();
+    expect(checkoutConfigOnly).toHaveBeenCalledWith(cwd);
+    const prd = readPrd(join(cwd, "prd.json"));
+    expect(prd.stories[0].fixCount).toBe(1);
+    const fixList = readFileSync(join(runDir, "artifacts", "fix_list.md"), "utf-8");
+    expect(fixList).toContain("aiflow/config");
+    const events = readEvents(runDir);
+    const gateEvent = events.find((e) => e.type === "gate_result");
+    expect(gateEvent).toMatchObject({ checks: "fail", reason: "config_tampered" });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("unchanged config hash before/after does not revert config or skip the review gate", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const hashConfigDir = mock(() => "same-hash-always");
+    const checkoutConfigOnly = mock(async () => {});
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = { ...fixedGit(), checkoutConfigOnly };
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir,
+    });
+
+    expect(result.result).toBe("pass");
+    expect(runReviewGate).toHaveBeenCalledTimes(1);
+    expect(checkoutConfigOnly).not.toHaveBeenCalled();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
