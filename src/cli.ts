@@ -110,7 +110,11 @@ program
   .option("--run-id <id>", "resume a specific run (defaults to latest)")
   .option("--pipeline <name>", "override the pipeline name read from state.json")
   .option("--force", "re-execute stages that already reached a terminal state", false)
-  .option("--raise-budget <n>", "raise the pipeline's budget.max_cost_usd to this value before resuming", (v) => Number(v))
+  .option("--raise-budget <n>", "raise the pipeline's budget.max_cost_usd to this value before resuming", (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`Invalid --raise-budget value: ${v}`);
+    return n;
+  })
   .action(async (opts: { runId?: string; pipeline?: string; force: boolean; raiseBudget?: number }) => {
     const { runResume } = await import("./commands/resume");
     const { acquireRunLock, LockWaitAbortedError } = await import("./lock");

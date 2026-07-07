@@ -39,6 +39,9 @@ export async function runResume(
   const wasTerminal = persisted.stages.every((s) => isTerminalStatus(s.status));
 
   if (opts.raiseBudget !== undefined) {
+    if (!Number.isFinite(opts.raiseBudget) || opts.raiseBudget <= 0) {
+      throw new Error(`Invalid --raise-budget value: ${opts.raiseBudget}. Must be a positive number.`);
+    }
     persisted.budget = { limit_usd: opts.raiseBudget };
     writeFileSync(statePath, JSON.stringify(persisted, null, 2));
   }

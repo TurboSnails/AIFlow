@@ -153,4 +153,31 @@ describe("runResume", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test("resume rejects invalid --raise-budget with a message mentioning --raise-budget", async () => {
+    const cwd = await copyFixture();
+    try {
+      const runId = "20260701_150000_abcd12";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runId,
+          pipeline: "ralph-only",
+          stages: [{ id: "develop", status: "paused", reason: "budget_exceeded" }],
+          cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+          budget: { limit_usd: 5 },
+        }),
+      );
+      writeFileSync(join(runDir, "prd.json"), JSON.stringify({ branchName: "fix/clamp", stories: [{ id: "US-1", title: "x", acceptance: [], priority: 1, passes: false, fixCount: 0 }] }));
+
+      await expect(runResume(cwd, { runId, raiseBudget: Number.NaN })).rejects.toThrow(/--raise-budget/);
+      await expect(runResume(cwd, { runId, raiseBudget: -10 })).rejects.toThrow(/--raise-budget/);
+      await expect(runResume(cwd, { runId, raiseBudget: 0 })).rejects.toThrow(/--raise-budget/);
+      await expect(runResume(cwd, { runId, raiseBudget: Number.POSITIVE_INFINITY })).rejects.toThrow(/--raise-budget/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
