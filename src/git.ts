@@ -24,6 +24,10 @@ export async function isClean(cwd: string): Promise<boolean> {
 }
 
 export async function checkoutClean(cwd: string): Promise<void> {
-  await $`git -C ${cwd} checkout -- .`.quiet();
+  // Must restore from HEAD, not just `checkout -- .` (which restores from the
+  // index): ralph-loop's own workflow calls stageAll() (`git add -A`) before
+  // running the gate, so by the time a story is suspended the agent's edits
+  // are already staged and `git checkout -- .` would be a no-op.
+  await $`git -C ${cwd} checkout HEAD -- .`.quiet();
   await $`git -C ${cwd} clean -fd`.quiet();
 }

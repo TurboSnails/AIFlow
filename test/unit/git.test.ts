@@ -89,6 +89,20 @@ test("checkoutClean discards a modification to a tracked file", async () => {
   }
 });
 
+test("checkoutClean discards a modification that has already been staged (git add -A)", async () => {
+  const dir = await makeTempRepo();
+  try {
+    writeFileSync(join(dir, "a.txt"), "changed\n");
+    await stageAll(dir);
+    await checkoutClean(dir);
+    expect(await isClean(dir)).toBe(true);
+    const content = await Bun.file(join(dir, "a.txt")).text();
+    expect(content).toBe("hello\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("checkoutClean removes an untracked file", async () => {
   const dir = await makeTempRepo();
   try {
