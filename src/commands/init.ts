@@ -17,6 +17,12 @@ const MODELS_YAML_TEMPLATE = `profiles:
     model: REPLACE_ME_VERIFY_VIA_DOCTOR
     base_url: REPLACE_ME_VERIFY_VIA_DOCTOR
     api_key_env: MINIMAX_API_KEY
+  alt-reviewer:
+    channel: http
+    provider: REPLACE_ME_VERIFY_VIA_DOCTOR
+    model: REPLACE_ME_VERIFY_VIA_DOCTOR
+    base_url: REPLACE_ME_VERIFY_VIA_DOCTOR
+    api_key_env: ALT_REVIEWER_API_KEY
 `;
 
 const PROJECT_YAML_TEMPLATE = `{}

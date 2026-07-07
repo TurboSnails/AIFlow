@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../../src/commands/init";
+import { loadModelsConfig } from "../../src/config/loader";
 
 test("runInit creates the .aiflow/config scaffold with default files", () => {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-init-test-"));
@@ -66,6 +67,18 @@ test("runInit is idempotent: calling it twice does not duplicate .gitignore entr
     const matches = gitignore.match(/\.aiflow\/runs\//g);
     expect(matches).not.toBeNull();
     expect(matches!.length).toBe(1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runInit's models.yaml scaffold has at least 2 http-channel profiles for brainstorm's models list", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-init-test-"));
+  try {
+    runInit(dir);
+    const config = loadModelsConfig(join(dir, ".aiflow", "config", "models.yaml"));
+    const httpProfiles = Object.values(config.profiles).filter((p) => p.channel === "http");
+    expect(httpProfiles.length).toBeGreaterThanOrEqual(2);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
