@@ -72,9 +72,8 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
     const inTok = data.usage?.prompt_tokens ?? 0;
     const outTok = data.usage?.completion_tokens ?? 0;
     const costUsd =
-      profile.input_cost_per_1m !== undefined && profile.output_cost_per_1m !== undefined
-        ? (inTok / 1_000_000) * profile.input_cost_per_1m + (outTok / 1_000_000) * profile.output_cost_per_1m
-        : 0;
+      (inTok / 1_000_000) * (profile.input_cost_per_1m ?? 0) +
+      (outTok / 1_000_000) * (profile.output_cost_per_1m ?? 0);
     return {
       text: data.choices[0].message.content,
       usage: { inTok, outTok, costUsd },

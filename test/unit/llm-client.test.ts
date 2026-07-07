@@ -135,6 +135,20 @@ test("callLlm computes real costUsd from input_cost_per_1m/output_cost_per_1m wh
   expect(result.usage.costUsd).toBeCloseTo(2, 5);
 });
 
+test("callLlm computes costUsd from input_cost_per_1m alone when output_cost_per_1m is missing", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = { ...profile, input_cost_per_1m: 2, output_cost_per_1m: undefined };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1_000_000, completion_tokens: 500_000 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callLlm({ profile: pricedProfile, prompt: "x", fetchFn: fakeFetch });
+  // 1_000_000 tok @ $2/1M = $2.00; output tokens have no price, so they contribute 0
+  expect(result.usage.costUsd).toBeCloseTo(2, 5);
+});
+
 test("callLlm leaves costUsd at 0 when no pricing is configured on the profile", async () => {
   process.env.TEST_REVIEWER_KEY = "fake-key-value";
   const fakeFetch = (async () =>
