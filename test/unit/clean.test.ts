@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { selectRunsToClean, parseBefore, runClean } from "../../src/commands/clean";
@@ -55,14 +55,22 @@ test("selectRunsToClean combines status + before (intersection)", () => {
   expect(toDelete.map((r) => r.runId)).toEqual(["a"]);
 });
 
-test("parseBefore accepts Nd relative and ISO date", () => {
+test("parseBefore accepts Nd relative and strict ISO date", () => {
   const now = new Date("2026-07-08T00:00:00.000Z");
   const sevenDaysAgo = parseBefore("7d", now)!;
   expect(sevenDaysAgo.getTime()).toBe(now.getTime() - 7 * 86400_000);
   const iso = parseBefore("2026-07-01T00:00:00.000Z", now)!;
   expect(iso.toISOString()).toBe("2026-07-01T00:00:00.000Z");
+  expect(parseBefore("2026-07-01", now)!.toISOString()).toBe("2026-07-01T00:00:00.000Z");
   expect(parseBefore("garbage", now)).toBeUndefined();
+  expect(parseBefore("07/01/2026", now)).toBeUndefined();
+  expect(parseBefore("July 1, 2026", now)).toBeUndefined();
 });
+
+function setMtime(dir: string, mtimeMs: number): void {
+  const d = new Date(mtimeMs);
+  utimesSync(dir, d, d);
+}
 
 // --- runClean command-entry tests ---
 
@@ -141,6 +149,43 @@ test("runClean rejects an invalid --status value", () => {
     const code = runClean(cwd, { status: "paused", writeErr: (s) => { err += s; }, write: () => {} });
     expect(code).toBe(1);
     expect(err.toLowerCase()).toContain("status");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runClean --before deletes only runs older than the cutoff", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-"));
+  try {
+    const now = Date.now();
+    const oldDir = writeRun(cwd, "old", { stages: [{ id: "s1", status: "done" }] });
+    const newDir = writeRun(cwd, "new", { stages: [{ id: "s1", status: "done" }] });
+    setMtime(oldDir, now - 2 * 86400_000);
+    setMtime(newDir, now - 3600_000);
+    const code = runClean(cwd, { before: "1d", yes: true, write: () => {}, writeErr: () => {} });
+    expect(code).toBe(0);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "old"))).toBe(false);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "new"))).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runClean --keep keeps newest N candidates and deletes the rest", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-"));
+  try {
+    const now = Date.now();
+    const newestDir = writeRun(cwd, "newest", { stages: [{ id: "s1", status: "done" }] });
+    const middleDir = writeRun(cwd, "middle", { stages: [{ id: "s1", status: "done" }] });
+    const oldestDir = writeRun(cwd, "oldest", { stages: [{ id: "s1", status: "done" }] });
+    setMtime(newestDir, now);
+    setMtime(middleDir, now - 3600_000);
+    setMtime(oldestDir, now - 2 * 3600_000);
+    const code = runClean(cwd, { keep: 2, yes: true, write: () => {}, writeErr: () => {} });
+    expect(code).toBe(0);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "newest"))).toBe(true);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "middle"))).toBe(true);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "oldest"))).toBe(false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

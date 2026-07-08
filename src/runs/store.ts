@@ -29,14 +29,13 @@ export function loadRun(cwd: string, runId: string): LoadedRun | undefined {
   const runDir = join(runsRoot(cwd), runId);
   const statePath = join(runDir, "state.json");
   if (!existsSync(statePath)) return undefined;
-  let state: EngineState;
   try {
-    state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
+    const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
+    const mtimeMs = statSync(runDir).mtimeMs;
+    return { runId, state, mtimeMs };
   } catch {
     return undefined;
   }
-  const mtimeMs = statSync(runDir).mtimeMs;
-  return { runId, state, mtimeMs };
 }
 
 /** Read the run.lock's run_id, or undefined when absent/unreadable. Local read-only
