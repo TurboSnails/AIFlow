@@ -7,7 +7,7 @@ import { writePrd, readPrd, type Prd } from "../../src/prd";
 import type { RalphLoopStageConfig, ModelProfile } from "../../src/config/schema";
 import { readEvents } from "../../src/events/events";
 import { runRalphLoop } from "../../src/runners/ralph-loop";
-import { createBudgetTracker } from "../../src/gate/budget";
+import { createBudgetTracker, type BudgetTracker } from "../../src/gate/budget";
 
 function samplePrd(): Prd {
   return {
@@ -750,6 +750,68 @@ test("runRalphLoop with no budget tracker argument behaves exactly as before (no
     });
 
     expect(summary.result).toBe("pass");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("a failed agent call still records its cost in the budget tracker (without pausing)", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const recorded: number[] = [];
+    const budget: BudgetTracker = {
+      limitUsd: undefined,
+      record: (delta: number) => { recorded.push(delta); return false; },
+    };
+    const runAgentTask = mock(async () => ({ ok: false, transcriptPath: "unused", usage: { inTok: 3, outTok: 1, costUsd: 0.4 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    }, budget);
+
+    expect(result.result).toBe("fail");
+    expect(recorded).toContain(0.4);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("a config-tamper iteration still records its cost in the budget tracker (without pausing)", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const recorded: number[] = [];
+    const budget: BudgetTracker = {
+      limitUsd: undefined,
+      record: (delta: number) => { recorded.push(delta); return false; },
+    };
+    let hashCall = 0;
+    const hashConfigDir = mock(() => {
+      hashCall += 1;
+      return hashCall === 1 ? "before" : "after-different";
+    });
+    const checkoutConfigOnly = mock(async () => {});
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 3, outTok: 1, costUsd: 0.7 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = { ...fixedGit(), checkoutConfigOnly };
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir,
+    }, budget);
+
+    expect(result.result).toBe("fail");
+    expect(checkoutConfigOnly).toHaveBeenCalledWith(cwd);
+    expect(runReviewGate).not.toHaveBeenCalled();
+    expect(recorded).toContain(0.7);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });

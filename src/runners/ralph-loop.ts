@@ -132,6 +132,7 @@ export async function runRalphLoopOnce(
     const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
     const result = suspended ? "suspended" : "fail";
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
+    budget.record(agentResult.usage.costUsd); // 记账；本轮因篡改结束，不熔断
     return { storyId: story.id, result, usage: agentResult.usage };
   }
 
@@ -144,6 +145,7 @@ export async function runRalphLoopOnce(
     writePrd(prdPath, updatedPrd);
     appendFileSync(fixListPath, `\n## ${story.id} (agent call failed)\nOpenCode agent invocation did not complete successfully.\n`);
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result: "fail" });
+    budget.record(agentResult.usage.costUsd); // 记账；本轮 agent 失败，不熔断
     return { storyId: story.id, result: "fail", usage: agentResult.usage };
   }
 
