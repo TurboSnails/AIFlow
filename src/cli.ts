@@ -306,11 +306,12 @@ program
   .option("--no-color", "disable ANSI colors")
   .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; color: boolean }) => {
     const { runClean } = await import("./commands/clean");
-    const confirm = () => {
-      if (opts.yes) return true;
-      const answer = prompt("Delete these runs? (y/N)");
-      return answer?.trim().toLowerCase() === "y";
-    };
+    const confirm = process.stdin.isTTY
+      ? () => {
+          const answer = prompt("Delete these runs? (y/N)");
+          return answer?.trim().toLowerCase() === "y";
+        }
+      : undefined;
     process.exitCode = runClean(process.cwd(), {
       before: opts.before,
       status: opts.status,

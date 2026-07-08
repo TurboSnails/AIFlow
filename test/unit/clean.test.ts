@@ -145,3 +145,20 @@ test("runClean rejects an invalid --status value", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("runClean refuses to delete in non-TTY without --yes or confirm", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-"));
+  const previousIsTty = process.stdin.isTTY;
+  process.stdin.isTTY = false;
+  try {
+    writeRun(cwd, "done1", { stages: [{ id: "s1", status: "done" }] });
+    let err = "";
+    const code = runClean(cwd, { status: "done", writeErr: (s) => { err += s; }, write: () => {} });
+    expect(code).toBe(1);
+    expect(err).toContain("refusing to delete without --yes (non-interactive)");
+    expect(existsSync(join(cwd, ".aiflow", "runs", "done1"))).toBe(true);
+  } finally {
+    process.stdin.isTTY = previousIsTty;
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
