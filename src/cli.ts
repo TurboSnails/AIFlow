@@ -95,6 +95,9 @@ program
       );
       const outcome = summarizePipelineOutcome(state);
       console.log(outcome.line);
+      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+      const budgetLine = formatBudgetOutcomeLine(state);
+      if (budgetLine) console.log(budgetLine);
       process.exitCode = outcome.exitCode;
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
@@ -151,6 +154,9 @@ program
       const { summarizePipelineOutcome } = await import("./engine/engine");
       const outcome = summarizePipelineOutcome(result.state!);
       console.log(`Run ${result.runId}: ${outcome.line}`);
+      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+      const budgetLine = formatBudgetOutcomeLine(result.state!);
+      if (budgetLine) console.log(budgetLine);
       process.exitCode = outcome.exitCode;
     } finally {
       lock.release();
@@ -193,6 +199,9 @@ program
       const { summarizePipelineOutcome } = await import("./engine/engine");
       const outcome = summarizePipelineOutcome(result.state!);
       console.log(`Run ${result.runId}: ${outcome.line}`);
+      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+      const budgetLine = formatBudgetOutcomeLine(result.state!);
+      if (budgetLine) console.log(budgetLine);
       process.exitCode = outcome.exitCode;
     } finally {
       lock.release();
