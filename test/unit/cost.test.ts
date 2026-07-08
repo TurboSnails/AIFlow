@@ -1,5 +1,13 @@
 import { test, expect } from "bun:test";
-import { summarizeRunCost, summarizeAllRunsCost } from "../../src/commands/cost";
+import {
+  summarizeRunCost,
+  summarizeAllRunsCost,
+  renderRunCostTable,
+  renderAllRunsCostTable,
+  renderCostJson,
+  renderRunCostCsv,
+  renderAllRunsCostCsv,
+} from "../../src/commands/cost";
 import type { EngineState } from "../../src/engine/state";
 import type { AiflowEvent } from "../../src/events/events";
 
@@ -73,4 +81,78 @@ test("summarizeAllRunsCost uses run-level state.cost per row and computes grand 
   expect(s.grandTotalInTok).toBe(30);
   expect(s.grandTotalOutTok).toBe(12);
   expect(s.grandTotalCostUsd).toBeCloseTo(2.5, 10);
+});
+
+test("renderRunCostTable shows per-stage rows, a total row, and the run/pipeline header", () => {
+  const s = summarizeRunCost("run-x", stateWith(1.012, "full-auto"), [
+    stageCost("ideate", 12400, 3100, 0.062),
+    stageCost("develop", 120000, 45000, 0.95),
+  ]);
+  const out = renderRunCostTable(s, { color: false });
+  expect(out).toContain("run-x");
+  expect(out).toContain("full-auto");
+  expect(out).toContain("ideate");
+  expect(out).toContain("develop");
+  expect(out).toContain("Total");
+  expect(out).toContain("$1.0120");
+  // 千位分隔
+  expect(out).toContain("120,000");
+});
+
+test("renderRunCostTable prints the degraded notice and run-level total when breakdown is unavailable", () => {
+  const s = summarizeRunCost("old-run", stateWith(0.5), []);
+  const out = renderRunCostTable(s, { color: false });
+  expect(out).toContain("Per-stage breakdown unavailable");
+  expect(out).toContain("$0.5000");
+  expect(out).not.toContain("Total  ");
+});
+
+test("renderRunCostTable adds a reconciliation line when stage sum differs from run-level cost", () => {
+  const s = summarizeRunCost("run-x", stateWith(2.0), [stageCost("develop", 1, 1, 1.5)]);
+  const out = renderRunCostTable(s, { color: false });
+  expect(out).toContain("run-level state.cost: $2.0000");
+});
+
+test("renderCostJson serializes the RunCostSummary structurally", () => {
+  const s = summarizeRunCost("run-x", stateWith(0.062, "p"), [stageCost("ideate", 12400, 3100, 0.062)]);
+  const parsed = JSON.parse(renderCostJson(s));
+  expect(parsed.runId).toBe("run-x");
+  expect(parsed.stages[0]).toEqual({ stage: "ideate", inTok: 12400, outTok: 3100, costUsd: 0.062 });
+  expect(parsed.breakdownAvailable).toBe(true);
+});
+
+test("renderRunCostCsv emits a header, one row per stage, and a total row without thousands separators", () => {
+  const s = summarizeRunCost("run-x", stateWith(1.012), [
+    stageCost("ideate", 12400, 3100, 0.062),
+    stageCost("develop", 120000, 45000, 0.95),
+  ]);
+  const csv = renderRunCostCsv(s);
+  const lines = csv.trim().split("\n");
+  expect(lines[0]).toBe("stage,in_tok,out_tok,cost_usd");
+  expect(lines[1]).toBe("ideate,12400,3100,0.062");
+  expect(lines[2]).toBe("develop,120000,45000,0.95");
+  expect(lines[3]).toBe("total,132400,48100,1.012");
+});
+
+test("renderAllRunsCostCsv emits a header and one row per run with breakdown_available", () => {
+  const s = summarizeAllRunsCost([
+    { runId: "r2", state: { ...stateWith(2, "p2"), cost: { input_tokens: 20, output_tokens: 8, est_usd: 2 } }, events: [stageCost("develop", 20, 8, 2)] },
+    { runId: "r1", state: { ...stateWith(0.5, "p1"), cost: { input_tokens: 10, output_tokens: 4, est_usd: 0.5 } }, events: [] },
+  ]);
+  const csv = renderAllRunsCostCsv(s);
+  const lines = csv.trim().split("\n");
+  expect(lines[0]).toBe("run_id,pipeline,in_tok,out_tok,cost_usd,breakdown_available");
+  expect(lines[1]).toBe("r2,p2,20,8,2,true");
+  expect(lines[2]).toBe("r1,p1,10,4,0.5,false");
+});
+
+test("renderAllRunsCostTable shows one row per run and a grand total", () => {
+  const s = summarizeAllRunsCost([
+    { runId: "r2", state: { ...stateWith(2, "p2"), cost: { input_tokens: 20, output_tokens: 8, est_usd: 2 } }, events: [stageCost("develop", 20, 8, 2)] },
+  ]);
+  const out = renderAllRunsCostTable(s, { color: false });
+  expect(out).toContain("r2");
+  expect(out).toContain("p2");
+  expect(out).toContain("$2.0000");
+  expect(out).toContain("Grand total");
 });

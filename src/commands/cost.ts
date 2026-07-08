@@ -84,3 +84,85 @@ export function summarizeAllRunsCost(
     grandTotalCostUsd: rows.reduce((a, r) => a + r.totalCostUsd, 0),
   };
 }
+
+const ANSI = { reset: "\x1b[0m", bold: "\x1b[1m", gray: "\x1b[90m" } as const;
+
+function paint(code: keyof typeof ANSI, on: boolean, text: string): string {
+  return on ? `${ANSI[code]}${text}${ANSI.reset}` : text;
+}
+
+function commas(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+function usd(n: number): string {
+  return `$${n.toFixed(4)}`;
+}
+
+export function renderRunCostTable(summary: RunCostSummary, opts: { color?: boolean } = {}): string {
+  const color = opts.color !== false;
+  const lines: string[] = [];
+  lines.push(paint("bold", color, `Cost — run ${summary.runId} (pipeline: ${summary.pipeline})`));
+  lines.push("");
+  if (!summary.breakdownAvailable) {
+    lines.push("  Per-stage breakdown unavailable for this run (predates stage_cost events).");
+    lines.push(`  Total (run-level): ${usd(summary.runLevelCostUsd)}`);
+    return lines.join("\n");
+  }
+  const stageW = Math.max(14, ...summary.stages.map((s) => s.stage.length));
+  const header = `  ${"Stage".padEnd(stageW)}  ${"In tokens".padStart(12)}  ${"Out tokens".padStart(12)}  ${"Cost".padStart(10)}`;
+  lines.push(paint("bold", color, header));
+  for (const s of summary.stages) {
+    lines.push(`  ${s.stage.padEnd(stageW)}  ${commas(s.inTok).padStart(12)}  ${commas(s.outTok).padStart(12)}  ${usd(s.costUsd).padStart(10)}`);
+  }
+  lines.push(`  ${"-".repeat(stageW + 40)}`);
+  lines.push(`  ${"Total".padEnd(stageW)}  ${commas(summary.totalInTok).padStart(12)}  ${commas(summary.totalOutTok).padStart(12)}  ${usd(summary.totalCostUsd).padStart(10)}`);
+  if (Math.abs(summary.totalCostUsd - summary.runLevelCostUsd) > 1e-9) {
+    lines.push(paint("gray", color, `  (run-level state.cost: ${usd(summary.runLevelCostUsd)})`));
+  }
+  return lines.join("\n");
+}
+
+export function renderAllRunsCostTable(summary: AllRunsCostSummary, opts: { color?: boolean } = {}): string {
+  const color = opts.color !== false;
+  const lines: string[] = [];
+  lines.push(paint("bold", color, "Cost — all runs"));
+  lines.push("");
+  const runW = Math.max(20, ...summary.rows.map((r) => r.runId.length));
+  const pipeW = Math.max(10, ...summary.rows.map((r) => r.pipeline.length));
+  const header = `  ${"Run".padEnd(runW)}  ${"Pipeline".padEnd(pipeW)}  ${"In tokens".padStart(12)}  ${"Out tokens".padStart(12)}  ${"Cost".padStart(10)}`;
+  lines.push(paint("bold", color, header));
+  let anyDegraded = false;
+  for (const r of summary.rows) {
+    const mark = r.breakdownAvailable ? "" : " *";
+    if (!r.breakdownAvailable) anyDegraded = true;
+    lines.push(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${commas(r.totalInTok).padStart(12)}  ${commas(r.totalOutTok).padStart(12)}  ${(usd(r.totalCostUsd) + mark).padStart(10)}`);
+  }
+  lines.push(`  ${"-".repeat(runW + pipeW + 40)}`);
+  lines.push(`  ${"Grand total".padEnd(runW)}  ${"".padEnd(pipeW)}  ${commas(summary.grandTotalInTok).padStart(12)}  ${commas(summary.grandTotalOutTok).padStart(12)}  ${usd(summary.grandTotalCostUsd).padStart(10)}`);
+  if (anyDegraded) {
+    lines.push(paint("gray", color, "  * per-stage breakdown unavailable (predates stage_cost events)"));
+  }
+  return lines.join("\n");
+}
+
+export function renderCostJson(summary: RunCostSummary | AllRunsCostSummary): string {
+  return JSON.stringify(summary, null, 2);
+}
+
+export function renderRunCostCsv(summary: RunCostSummary): string {
+  const lines: string[] = ["stage,in_tok,out_tok,cost_usd"];
+  for (const s of summary.stages) {
+    lines.push(`${s.stage},${s.inTok},${s.outTok},${s.costUsd}`);
+  }
+  lines.push(`total,${summary.totalInTok},${summary.totalOutTok},${summary.totalCostUsd}`);
+  return lines.join("\n") + "\n";
+}
+
+export function renderAllRunsCostCsv(summary: AllRunsCostSummary): string {
+  const lines: string[] = ["run_id,pipeline,in_tok,out_tok,cost_usd,breakdown_available"];
+  for (const r of summary.rows) {
+    lines.push(`${r.runId},${r.pipeline},${r.totalInTok},${r.totalOutTok},${r.totalCostUsd},${r.breakdownAvailable}`);
+  }
+  return lines.join("\n") + "\n";
+}
