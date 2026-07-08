@@ -59,7 +59,7 @@ export async function runDoctorChecks(
   const pricingWarnings: string[] =
     reviewerProfile && reviewerProfile.channel === "http" &&
     (reviewerProfile.input_cost_per_1m === undefined || reviewerProfile.output_cost_per_1m === undefined)
-      ? ["Profile has no input_cost_per_1m/output_cost_per_1m configured; its spend will not count toward budget or cost reports."]
+      ? ["Profile is missing one or both of input_cost_per_1m/output_cost_per_1m; spend will be under-counted in budget and cost reports (missing fields are treated as $0)."]
       : [];
 
   const reviewerKeyPresent = Boolean(

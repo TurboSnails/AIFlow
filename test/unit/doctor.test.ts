@@ -72,6 +72,6 @@ test("reports a pricing warning for a channel:http profile missing input_cost_pe
   };
   const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
   expect(report.pricingWarnings).toContain(
-    "Profile has no input_cost_per_1m/output_cost_per_1m configured; its spend will not count toward budget or cost reports."
+    "Profile is missing one or both of input_cost_per_1m/output_cost_per_1m; spend will be under-counted in budget and cost reports (missing fields are treated as $0)."
   );
 });

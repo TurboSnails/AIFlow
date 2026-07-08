@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import type { RunLock } from "./lock";
 
 const program = new Command();
 program.name("aiflow").description("AIFlow pipeline orchestrator CLI").version("0.1.0");
@@ -66,7 +67,7 @@ program
     const onSigint = () => controller.abort();
     process.once("SIGINT", onSigint);
     const runId = createRunId();
-    let lock;
+    let lock: RunLock;
     try {
       lock = await acquireRunLock(process.cwd(), runId, {
         signal: controller.signal,
@@ -120,7 +121,7 @@ program
     const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
-    let lock;
+    let lock: RunLock;
     process.once("SIGINT", onSigint);
     try {
       lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-resume", {
@@ -167,7 +168,7 @@ program
     const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
-    let lock;
+    let lock: RunLock;
     process.once("SIGINT", onSigint);
     try {
       lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-approve", {
@@ -208,7 +209,7 @@ program
   .action(async (opts: { runId?: string; stage?: string; reason?: string }) => {
     const { runReject } = await import("./commands/reject");
     const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
-    let lock;
+    let lock: RunLock;
     try {
       lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-reject", {
         onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
