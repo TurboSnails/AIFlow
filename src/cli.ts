@@ -285,6 +285,17 @@ program
   });
 
 program
+  .command("runs")
+  .description("List all runs (read-only): id, pipeline, status, cost, age")
+  .option("--json", "output structured JSON", false)
+  .option("--csv", "output CSV", false)
+  .option("--no-color", "disable ANSI colors")
+  .action(async (opts: { json: boolean; csv: boolean; color: boolean }) => {
+    const { runRuns } = await import("./commands/runs");
+    process.exitCode = runRuns(process.cwd(), { json: opts.json, csv: opts.csv, color: opts.color });
+  });
+
+program
   .command("watch")
   .description("Poll and re-render the current run snapshot every second")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
