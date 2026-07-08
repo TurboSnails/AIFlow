@@ -171,6 +171,8 @@ function describeEvent(evt: AiflowEvent, color: boolean, now: Date): string {
       const reasonSuffix = evt.reason ? ` ${evt.reason}` : "";
       return `${formatTime(evt.ts, now)}  ${c("blue", color, "loop")}     ${evt.stage}  ${tag}${reasonSuffix}  iterations=${evt.iterations} done=${evt.stories_done} suspended=${evt.stories_suspended} pending=${evt.stories_pending}`;
     }
+    case "budget_warning":
+      return `${formatTime(evt.ts, now)}  ${c("yellow", color, "warn")}     ${evt.stage}  budget ${Math.round(evt.threshold_pct * 100)}% $${evt.spent_usd.toFixed(4)}/$${evt.limit_usd.toFixed(4)}`;
     default: {
       const generic = evt as { ts: string; type: string };
       return `${formatTime(generic.ts, now)}  ${c("blue", color, generic.type)}`;
@@ -196,6 +198,12 @@ export function renderStatus(state: EngineState, events: AiflowEvent[], opts: Mo
   lines.push("");
   lines.push(c("bold", color, "Cost:"));
   lines.push(`  in=${state.cost.input_tokens}  out=${state.cost.output_tokens}  est_usd=$${state.cost.est_usd.toFixed(4)}`);
+  if (state.budget) {
+    const pct = state.budget.limit_usd > 0 ? Math.round((state.cost.est_usd / state.budget.limit_usd) * 100) : 0;
+    const over = state.cost.est_usd >= state.budget.limit_usd;
+    const usage = `  Budget: $${state.cost.est_usd.toFixed(4)} / $${state.budget.limit_usd.toFixed(4)} (${pct}%)`;
+    lines.push(over ? c("red", color, usage) : usage);
+  }
   lines.push("");
   const tail = events.slice(-opts.tail);
   lines.push(c("bold", color, `Recent events: (${tail.length} of ${events.length})`));

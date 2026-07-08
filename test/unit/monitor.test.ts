@@ -99,6 +99,39 @@ describe("renderStatus", () => {
     expect(out).toContain("brainstorm_result");
     expect(out).not.toContain("undefined");
   });
+
+  test("renders a budget_warning event on its own line", () => {
+    const state = {
+      run_id: "r", pipeline: "p", stages: [],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 8 },
+      budget: { limit_usd: 10, warn_at_pct: [0.8] },
+    } as any;
+    const events = [
+      { ts: "2026-07-08T00:00:00.000Z", type: "budget_warning", stage: "build", threshold_pct: 0.8, spent_usd: 8, limit_usd: 10 },
+    ] as any;
+    const out = renderStatus(state, events, { tail: 8, color: false, now: new Date("2026-07-08T00:00:01.000Z") } as any);
+    expect(out).toContain("budget 80%");
+    expect(out).toContain("$8.0000/$10.0000");
+  });
+
+  test("shows a Budget usage line when the run has a budget", () => {
+    const state = {
+      run_id: "r", pipeline: "p", stages: [],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 8 },
+      budget: { limit_usd: 10 },
+    } as any;
+    const out = renderStatus(state, [], { tail: 8, color: false, now: new Date() } as any);
+    expect(out).toContain("Budget: $8.0000 / $10.0000 (80%)");
+  });
+
+  test("omits the Budget line when the run has no budget", () => {
+    const state = {
+      run_id: "r", pipeline: "p", stages: [],
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 8 },
+    } as any;
+    const out = renderStatus(state, [], { tail: 8, color: false, now: new Date() } as any);
+    expect(out).not.toContain("Budget:");
+  });
 });
 
 describe("readRunSnapshot", () => {
