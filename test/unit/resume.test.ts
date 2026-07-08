@@ -180,4 +180,41 @@ describe("runResume", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test("rejects a dirty tree for an auto_clean pipeline before mutating state.json", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "aiflow-resume-dirty-"));
+    try {
+      mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "models.yaml"),
+        "profiles:\n  main-dev:\n    channel: opencode\n    provider: x\n    model: y\n  reviewer:\n    channel: http\n    provider: y\n    model: z\n"
+      );
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "pipelines", "ac.yaml"),
+        'name: ac\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    per_story_fix_limit: 3\n    auto_clean: true\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n'
+      );
+      const runId = "20260708_120000_abcd12";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      const stateJson = JSON.stringify({
+        run_id: runId,
+        pipeline: "ac",
+        stages: [{ id: "develop", status: "paused", reason: "budget_exceeded" }],
+        cost: { input_tokens: 0, output_tokens: 0, est_usd: 5 },
+        budget: { limit_usd: 5 },
+      });
+      writeFileSync(join(runDir, "state.json"), stateJson);
+
+      // isCleanFn 注入为脏；raiseBudget 若在守卫前写盘就会篡改 state.json。
+      await expect(
+        runResume(cwd, { runId, raiseBudget: 50 }, undefined, undefined, async () => false)
+      ).rejects.toThrow(/auto_clean enabled on a ralph_loop stage/);
+
+      // 断言 state.json 未被 raiseBudget 改动（守卫在写盘前拦住）。
+      const after = readFileSync(join(runDir, "state.json"), "utf-8");
+      expect(after).toBe(stateJson);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });

@@ -4,6 +4,7 @@ import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import type { ModelProfile } from "../config/schema";
 import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/engine";
 import type { EngineState } from "../engine/state";
+import { assertCleanIfAutoClean } from "./dirty-guard";
 
 export interface ResumeResult {
   status: "resumed" | "noop_terminal" | "no_runs" | "missing_run_dir";
@@ -25,7 +26,8 @@ export async function runResume(
   cwd: string,
   opts: { runId?: string; pipeline?: string; force?: boolean; raiseBudget?: number },
   deps?: EngineDeps,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  isCleanFn?: (cwd: string) => Promise<boolean>
 ): Promise<ResumeResult> {
   const runId = opts.runId ?? pickLatestRun(cwd);
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
@@ -38,6 +40,11 @@ export async function runResume(
   const pipelineName = opts.pipeline ?? persisted.pipeline;
   const wasTerminal = persisted.stages.every((s) => isTerminalStatus(s.status));
 
+  const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
+  const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
+
+  await assertCleanIfAutoClean(cwd, pipelineConfig, pipelineName, isCleanFn);
+
   if (opts.raiseBudget !== undefined) {
     if (!Number.isFinite(opts.raiseBudget) || opts.raiseBudget <= 0) {
       throw new Error(`Invalid --raise-budget value: ${opts.raiseBudget}. Must be a positive number.`);
@@ -45,9 +52,6 @@ export async function runResume(
     persisted.budget = { limit_usd: opts.raiseBudget };
     writeFileSync(statePath, JSON.stringify(persisted, null, 2));
   }
-
-  const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
-  const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
 
   const profiles: Record<string, ModelProfile> = modelsConfig.profiles;
   const state = await runPipelineOnce(
