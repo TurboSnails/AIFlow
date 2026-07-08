@@ -101,6 +101,13 @@ function usd(n: number): string {
   return `$${n.toFixed(4)}`;
 }
 
+function escapeCsv(field: string): string {
+  if (/[",\r\n]/.test(field)) {
+    return `"${field.replace(/"/g, '""')}"`;
+  }
+  return field;
+}
+
 export function renderRunCostTable(summary: RunCostSummary, opts: { color?: boolean } = {}): string {
   const color = opts.color !== false;
   const lines: string[] = [];
@@ -155,16 +162,16 @@ export function renderCostJson(summary: RunCostSummary | AllRunsCostSummary): st
 export function renderRunCostCsv(summary: RunCostSummary): string {
   const lines: string[] = ["stage,in_tok,out_tok,cost_usd"];
   for (const s of summary.stages) {
-    lines.push(`${s.stage},${s.inTok},${s.outTok},${s.costUsd}`);
+    lines.push(`${escapeCsv(s.stage)},${s.inTok},${s.outTok},${s.costUsd}`);
   }
-  lines.push(`total,${summary.totalInTok},${summary.totalOutTok},${summary.totalCostUsd}`);
+  lines.push(`${escapeCsv("total")},${summary.totalInTok},${summary.totalOutTok},${summary.totalCostUsd}`);
   return lines.join("\n") + "\n";
 }
 
 export function renderAllRunsCostCsv(summary: AllRunsCostSummary): string {
   const lines: string[] = ["run_id,pipeline,in_tok,out_tok,cost_usd,breakdown_available"];
   for (const r of summary.rows) {
-    lines.push(`${r.runId},${r.pipeline},${r.totalInTok},${r.totalOutTok},${r.totalCostUsd},${r.breakdownAvailable}`);
+    lines.push(`${escapeCsv(r.runId)},${escapeCsv(r.pipeline)},${r.totalInTok},${r.totalOutTok},${r.totalCostUsd},${r.breakdownAvailable}`);
   }
   return lines.join("\n") + "\n";
 }
@@ -192,9 +199,11 @@ function runsRoot(cwd: string): string {
 function listRunIdsByMtimeDesc(cwd: string): string[] {
   const root = runsRoot(cwd);
   if (!existsSync(root)) return [];
-  const dirs = readdirSync(root).filter((n) => statSync(join(root, n)).isDirectory());
-  dirs.sort((a, b) => statSync(join(root, b)).mtimeMs - statSync(join(root, a)).mtimeMs);
-  return dirs;
+  const entries = readdirSync(root)
+    .map((id) => ({ id, stat: statSync(join(root, id)) }))
+    .filter((e) => e.stat.isDirectory());
+  entries.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+  return entries.map((e) => e.id);
 }
 
 function loadRun(cwd: string, runId: string): LoadedRun | undefined {

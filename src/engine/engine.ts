@@ -303,6 +303,9 @@ export async function runPipelineOnce(
     };
     writeStateAtomic(runDir, state);
 
+    // Best-effort: state.cost is already persisted above. A crash between that
+    // write and this event append can leave stage_cost events incomplete; the
+    // cost command renders a reconciliation line when the sums diverge.
     if (execResult.usage) {
       appendEvent(runDir, {
         ts: nowFn().toISOString(),

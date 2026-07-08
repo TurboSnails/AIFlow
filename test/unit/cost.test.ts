@@ -268,3 +268,79 @@ test("runCost returns 1 when the requested --run-id does not exist", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (c === '"') {
+      if (inQuotes && next === '"') {
+        field += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (c === ',' && !inQuotes) {
+      row.push(field);
+      field = "";
+    } else if ((c === '\n' || c === '\r') && !inQuotes) {
+      if (field.length > 0 || row.length > 0) {
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      }
+      if (c === '\r' && next === '\n') i++;
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+test("renderRunCostCsv escapes malicious string fields per RFC 4180 and parses back", () => {
+  const s = summarizeRunCost(
+    "run-x",
+    stateWith(3, 'foo, "bar"'),
+    [
+      stageCost("line1\nline2", 100, 50, 1),
+      stageCost("a,b", 200, 100, 2),
+    ]
+  );
+  const csv = renderRunCostCsv(s);
+  expect(csv).toContain('"line1\nline2"');
+  expect(csv).toContain('"a,b"');
+  const rows = parseCsv(csv);
+  expect(rows).toEqual([
+    ["stage", "in_tok", "out_tok", "cost_usd"],
+    ["line1\nline2", "100", "50", "1"],
+    ["a,b", "200", "100", "2"],
+    ["total", "300", "150", "3"],
+  ]);
+});
+
+test("renderAllRunsCostCsv escapes malicious string fields per RFC 4180 and parses back", () => {
+  const s = summarizeAllRunsCost([
+    {
+      runId: "run,1",
+      state: { ...stateWith(1.5, 'foo "bar"'), cost: { input_tokens: 10, output_tokens: 5, est_usd: 1.5 } },
+      events: [] as AiflowEvent[],
+    },
+  ]);
+  const csv = renderAllRunsCostCsv(s);
+  expect(csv).toContain('"run,1"');
+  expect(csv).toContain('"foo ""bar"""');
+  const rows = parseCsv(csv);
+  expect(rows).toEqual([
+    ["run_id", "pipeline", "in_tok", "out_tok", "cost_usd", "breakdown_available"],
+    ["run,1", 'foo "bar"', "10", "5", "1.5", "false"],
+  ]);
+});
