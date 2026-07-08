@@ -6,6 +6,7 @@ import { runPipelineOnce, createRunId, summarizePipelineOutcome } from "../../sr
 import { readState } from "../../src/engine/state";
 import type { PipelineConfig, ModelProfile } from "../../src/config/schema";
 import type { EngineState } from "../../src/engine/state";
+import { readEvents } from "../../src/events/events";
 
 const pipeline: PipelineConfig = {
   name: "ralph-only",
@@ -459,6 +460,59 @@ test("runPipelineOnce with no pipeline.budget passes a tracker with limitUsd und
     });
     await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, { runners: { ralph_loop: ralphLoop } });
     expect(seenLimit).toBeUndefined();
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce writes a stage_cost event per stage that reports usage, and their sum equals state.cost", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-cost-"));
+  try {
+    const ralphLoop = mock(async () => ({ result: "pass" as const, usage: { inTok: 120, outTok: 45, costUsd: 0.9 } }));
+    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { ralph_loop: ralphLoop },
+    });
+    const events = readEvents(runDir);
+    const stageCosts = events.filter((e) => e.type === "stage_cost");
+    expect(stageCosts).toEqual([
+      { ts: expect.any(String), type: "stage_cost", stage: "develop", in_tok: 120, out_tok: 45, cost_usd: 0.9 },
+    ]);
+    // 不变式：stage_cost 之和 == run 级 state.cost
+    const sum = stageCosts.reduce((a, e) => a + (e.type === "stage_cost" ? e.cost_usd : 0), 0);
+    expect(sum).toBeCloseTo(state.cost.est_usd, 10);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runPipelineOnce does not write a stage_cost event for a stage that reports no usage", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-cost-nousage-"));
+  try {
+    const twoStage: PipelineConfig = {
+      name: "gated",
+      stages: [
+        { id: "confirm", type: "human_gate", prompt: "ok?" },
+        {
+          id: "develop",
+          type: "ralph_loop",
+          model: "main-dev",
+          per_story_fix_limit: 3,
+          max_iterations: 10,
+          stall_limit: 3,
+          auto_clean: false,
+          gate: { checks: [], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } },
+        },
+      ],
+    };
+    // human_gate returns waiting_human with NO usage → pipeline pauses at stage 0, no stage_cost written.
+    const state = await runPipelineOnce(twoStage, profiles, "/tmp/does-not-matter", runDir, {
+      runners: {
+        human_gate: mock(async () => ({ result: "waiting_human" as const })),
+      },
+    });
+    expect(state.stages[0].status).toBe("waiting_human");
+    const events = readEvents(runDir);
+    expect(events.filter((e) => e.type === "stage_cost")).toEqual([]);
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

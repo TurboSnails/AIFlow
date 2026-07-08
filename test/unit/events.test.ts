@@ -70,3 +70,22 @@ test("appendEvent then readEvents round-trips a ralph_loop_result event", () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("appendEvent then readEvents round-trips a stage_cost event", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-test-"));
+  try {
+    const e: AiflowEvent = {
+      ts: "2026-07-08T00:00:00.000Z",
+      type: "stage_cost",
+      stage: "develop",
+      in_tok: 1200,
+      out_tok: 340,
+      cost_usd: 0.0512,
+    };
+    appendEvent(dir, e);
+    const events = readEvents(dir);
+    expect(events).toEqual([e]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

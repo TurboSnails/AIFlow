@@ -20,6 +20,15 @@ export interface OpencodeStepFinishAiflowEvent {
   cost_usd: number;
 }
 
+export interface StageCostAiflowEvent {
+  ts: string;
+  type: "stage_cost";
+  stage: string;
+  in_tok: number;
+  out_tok: number;
+  cost_usd: number;
+}
+
 export interface GateResultAiflowEvent {
   ts: string;
   type: "gate_result";
@@ -95,6 +104,7 @@ export interface StoryAutoCleanedAiflowEvent {
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
+  | StageCostAiflowEvent
   | GateResultAiflowEvent
   | StoryResultAiflowEvent
   | RalphLoopResultAiflowEvent

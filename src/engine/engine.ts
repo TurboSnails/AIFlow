@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus, type StageStopReason } from "./state";
-import { readEvents } from "../events/events";
+import { readEvents, appendEvent } from "../events/events";
 import { runRalphLoop as realRunRalphLoop } from "../runners/ralph-loop";
 import { runBrainstormStage } from "../runners/brainstorm";
 import { runSpecStage } from "../runners/spec";
@@ -302,6 +302,17 @@ export async function runPipelineOnce(
         : state.cost,
     };
     writeStateAtomic(runDir, state);
+
+    if (execResult.usage) {
+      appendEvent(runDir, {
+        ts: nowFn().toISOString(),
+        type: "stage_cost",
+        stage: stage.id,
+        in_tok: execResult.usage.inTok,
+        out_tok: execResult.usage.outTok,
+        cost_usd: execResult.usage.costUsd,
+      });
+    }
 
     // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
     if (execResult.state.status !== "done") {
