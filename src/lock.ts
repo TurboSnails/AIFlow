@@ -73,10 +73,25 @@ export async function acquireRunLock(
       writeFileSync(path, JSON.stringify(info), { flag: "wx" });
       return {
         release: () => {
+          let current: LockInfo;
+          try {
+            current = readLockFn(path);
+          } catch {
+            // 锁文件已不存在或损坏 —— 不再是我们的锁，静默返回。
+            return;
+          }
+          if (
+            current.pid !== info.pid ||
+            current.run_id !== info.run_id ||
+            current.started_at !== info.started_at
+          ) {
+            // 已被他人回收（stale 回收竞态）—— 不删他人的活动锁。
+            return;
+          }
           try {
             unlinkSync(path);
           } catch {
-            // already gone (released twice, or reclaimed by someone else) — fine.
+            // 最后的竞态兜底：文件在校验与 unlink 之间被删。
           }
         },
       };

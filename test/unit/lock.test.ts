@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireRunLock, LockWaitAbortedError } from "../../src/lock";
@@ -137,6 +137,38 @@ test("acquireRunLock handles TOCTOU race: file deleted between check and read", 
     const lock = await waiter;
     expect(readAttempts).toBeGreaterThanOrEqual(2); // Should retry after race
     lock.release();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("release() does not delete a lock that has been reclaimed by another holder", async () => {
+  const dir = tmpProject();
+  try {
+    const lock = await acquireRunLock(dir, "run-A", { isPidAliveFn: () => true });
+    const lockPath = join(dir, ".aiflow", "run.lock");
+    // 模拟：原锁被判 stale 并被 B 回收 —— 文件内容现在是 B 的 info（不同 pid/run_id/started_at）。
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid + 1, run_id: "run-B", started_at: new Date(Date.now() + 1000).toISOString() })
+    );
+    lock.release(); // A 的 release 不应删掉 B 的锁
+    expect(existsSync(lockPath)).toBe(true);
+    const stillB = JSON.parse(readFileSync(lockPath, "utf-8"));
+    expect(stillB.run_id).toBe("run-B");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("release() silently returns when the lock file is already gone", async () => {
+  const dir = tmpProject();
+  try {
+    const lock = await acquireRunLock(dir, "run-A", { isPidAliveFn: () => true });
+    const lockPath = join(dir, ".aiflow", "run.lock");
+    unlinkSync(lockPath); // 锁已被外部删除
+    expect(() => lock.release()).not.toThrow();
+    expect(existsSync(lockPath)).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
