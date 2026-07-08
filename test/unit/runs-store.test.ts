@@ -104,6 +104,7 @@ test("summarizeRunStatus tokens", () => {
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }] }))).toBe("done");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "failed" }] }))).toBe("failed");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "aborted" }] }))).toBe("aborted");
+  expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "suspended" }] }))).toBe("suspended");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "paused" }] }))).toBe("paused");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "running" }] }))).toBe("running");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "pending" }] }))).toBe("pending");

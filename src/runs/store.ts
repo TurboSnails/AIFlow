@@ -65,5 +65,6 @@ export function summarizeRunStatus(state: EngineState): string {
   if (firstNonTerminal) return firstNonTerminal.status;
   if (state.stages.some((s) => s.status === "failed")) return "failed";
   if (state.stages.some((s) => s.status === "aborted")) return "aborted";
+  if (state.stages.some((s) => s.status === "suspended")) return "suspended";
   return "done";
 }
