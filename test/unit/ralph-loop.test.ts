@@ -777,6 +777,8 @@ test("a failed agent call still records its cost in the budget tracker (without 
 
     expect(result.result).toBe("fail");
     expect(recorded).toContain(0.4);
+    // agent 失败分支只经过一次记账 —— 主路径 record 被 agentResult.ok 短路。
+    expect(recorded).toEqual([0.4]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
@@ -812,6 +814,8 @@ test("a config-tamper iteration still records its cost in the budget tracker (wi
     expect(checkoutConfigOnly).toHaveBeenCalledWith(cwd);
     expect(runReviewGate).not.toHaveBeenCalled();
     expect(recorded).toContain(0.7);
+    // 该次调用的成本只应记账一次 —— 篡改分支在主路径 budget.record 之前返回，无重复计。
+    expect(recorded).toEqual([0.7]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });

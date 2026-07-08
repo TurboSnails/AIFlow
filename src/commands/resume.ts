@@ -43,6 +43,8 @@ export async function runResume(
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
 
+  // 脏树守卫必须先于任何盘上写入（含下方的 raiseBudget 写入），与 `aiflow run` 的
+  // preflight 顺序一致 —— 拒绝一个脏树时不能已经改过 state.json。请勿把校验挪到它之前。
   await assertCleanIfAutoClean(cwd, pipelineConfig, pipelineName, isCleanFn);
 
   if (opts.raiseBudget !== undefined) {
