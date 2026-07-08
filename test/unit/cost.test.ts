@@ -7,7 +7,11 @@ import {
   renderCostJson,
   renderRunCostCsv,
   renderAllRunsCostCsv,
+  runCost,
 } from "../../src/commands/cost";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { EngineState } from "../../src/engine/state";
 import type { AiflowEvent } from "../../src/events/events";
 
@@ -155,4 +159,112 @@ test("renderAllRunsCostTable shows one row per run and a grand total", () => {
   expect(out).toContain("p2");
   expect(out).toContain("$2.0000");
   expect(out).toContain("Grand total");
+});
+
+function makeRun(cwd: string, runId: string, estUsd: number, stageEvents: AiflowEvent[]): void {
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  mkdirSync(runDir, { recursive: true });
+  const state: EngineState = {
+    run_id: runId,
+    pipeline: "full-auto",
+    stages: [{ id: "develop", status: "done" }],
+    cost: { input_tokens: 100, output_tokens: 40, est_usd: estUsd },
+  };
+  writeFileSync(join(runDir, "state.json"), JSON.stringify(state));
+  if (stageEvents.length > 0) {
+    writeFileSync(join(runDir, "events.jsonl"), stageEvents.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  }
+}
+
+test("runCost renders the latest run's table by default and returns 0", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-"));
+  try {
+    makeRun(cwd, "20260708_100000_aaaaaa", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    let out = "";
+    const code = runCost(cwd, { color: false, write: (s) => { out += s; } });
+    expect(code).toBe(0);
+    expect(out).toContain("develop");
+    expect(out).toContain("$0.5000");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost --json emits parseable JSON for the run", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-json-"));
+  try {
+    makeRun(cwd, "20260708_100000_bbbbbb", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    let out = "";
+    const code = runCost(cwd, { json: true, write: (s) => { out += s; } });
+    expect(code).toBe(0);
+    expect(JSON.parse(out).stages[0].stage).toBe("develop");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost --all lists every run with a grand total", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-all-"));
+  try {
+    makeRun(cwd, "20260708_100000_run1aa", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    makeRun(cwd, "20260708_110000_run2bb", 1.5, [stageCost("develop", 200, 80, 1.5)]);
+    let out = "";
+    const code = runCost(cwd, { all: true, color: false, write: (s) => { out += s; } });
+    expect(code).toBe(0);
+    expect(out).toContain("Grand total");
+    expect(out).toContain("$2.0000");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost returns 1 and writes an error when there are no runs", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-empty-"));
+  try {
+    let err = "";
+    const code = runCost(cwd, { write: () => {}, writeErr: (s) => { err += s; } });
+    expect(code).toBe(1);
+    expect(err).toContain("No runs found");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost returns 1 when --json and --csv are combined", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-x1-"));
+  try {
+    makeRun(cwd, "20260708_100000_cccccc", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    let err = "";
+    const code = runCost(cwd, { json: true, csv: true, write: () => {}, writeErr: (s) => { err += s; } });
+    expect(code).toBe(1);
+    expect(err).toContain("mutually exclusive");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost returns 1 when --all and --run-id are combined", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-x2-"));
+  try {
+    makeRun(cwd, "20260708_100000_dddddd", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    let err = "";
+    const code = runCost(cwd, { all: true, runId: "20260708_100000_dddddd", write: () => {}, writeErr: (s) => { err += s; } });
+    expect(code).toBe(1);
+    expect(err).toContain("mutually exclusive");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runCost returns 1 when the requested --run-id does not exist", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-cost-cmd-x3-"));
+  try {
+    makeRun(cwd, "20260708_100000_eeeeee", 0.5, [stageCost("develop", 100, 40, 0.5)]);
+    let err = "";
+    const code = runCost(cwd, { runId: "nonexistent", write: () => {}, writeErr: (s) => { err += s; } });
+    expect(code).toBe(1);
+    expect(err).toContain("not found");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

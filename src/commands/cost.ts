@@ -1,3 +1,5 @@
+import { readdirSync, statSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
 
@@ -165,4 +167,96 @@ export function renderAllRunsCostCsv(summary: AllRunsCostSummary): string {
     lines.push(`${r.runId},${r.pipeline},${r.totalInTok},${r.totalOutTok},${r.totalCostUsd},${r.breakdownAvailable}`);
   }
   return lines.join("\n") + "\n";
+}
+
+export interface RunCostOptions {
+  runId?: string;
+  all?: boolean;
+  json?: boolean;
+  csv?: boolean;
+  color?: boolean;
+  write?: (s: string) => void;
+  writeErr?: (s: string) => void;
+}
+
+interface LoadedRun {
+  runId: string;
+  state: EngineState;
+  events: AiflowEvent[];
+}
+
+function runsRoot(cwd: string): string {
+  return join(cwd, ".aiflow", "runs");
+}
+
+function listRunIdsByMtimeDesc(cwd: string): string[] {
+  const root = runsRoot(cwd);
+  if (!existsSync(root)) return [];
+  const dirs = readdirSync(root).filter((n) => statSync(join(root, n)).isDirectory());
+  dirs.sort((a, b) => statSync(join(root, b)).mtimeMs - statSync(join(root, a)).mtimeMs);
+  return dirs;
+}
+
+function loadRun(cwd: string, runId: string): LoadedRun | undefined {
+  const runDir = join(runsRoot(cwd), runId);
+  const statePath = join(runDir, "state.json");
+  if (!existsSync(statePath)) return undefined;
+  const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
+  const eventsPath = join(runDir, "events.jsonl");
+  const events: AiflowEvent[] = existsSync(eventsPath)
+    ? readFileSync(eventsPath, "utf-8")
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as AiflowEvent)
+    : [];
+  return { runId, state, events };
+}
+
+export function runCost(cwd: string, opts: RunCostOptions): number {
+  const write = opts.write ?? ((s) => process.stdout.write(s));
+  const writeErr = opts.writeErr ?? ((s) => process.stderr.write(s));
+  const color = opts.color !== false;
+
+  if (opts.json && opts.csv) {
+    writeErr("--json and --csv are mutually exclusive\n");
+    return 1;
+  }
+  if (opts.all && opts.runId) {
+    writeErr("--all and --run-id are mutually exclusive\n");
+    return 1;
+  }
+
+  if (opts.all) {
+    const ids = listRunIdsByMtimeDesc(cwd);
+    if (ids.length === 0) {
+      writeErr(`No runs found in ${runsRoot(cwd)}\n`);
+      return 1;
+    }
+    const loaded = ids.map((id) => loadRun(cwd, id)).filter((r): r is LoadedRun => r !== undefined);
+    const summary = summarizeAllRunsCost(loaded);
+    if (opts.json) write(renderCostJson(summary) + "\n");
+    else if (opts.csv) write(renderAllRunsCostCsv(summary));
+    else write(renderAllRunsCostTable(summary, { color }) + "\n");
+    return 0;
+  }
+
+  let runId = opts.runId;
+  if (!runId) {
+    const ids = listRunIdsByMtimeDesc(cwd);
+    if (ids.length === 0) {
+      writeErr(`No runs found in ${runsRoot(cwd)}\n`);
+      return 1;
+    }
+    runId = ids[0];
+  }
+  const loaded = loadRun(cwd, runId);
+  if (!loaded) {
+    writeErr(`Run ${runId} not found in ${runsRoot(cwd)}\n`);
+    return 1;
+  }
+  const summary = summarizeRunCost(loaded.runId, loaded.state, loaded.events);
+  if (opts.json) write(renderCostJson(summary) + "\n");
+  else if (opts.csv) write(renderRunCostCsv(summary));
+  else write(renderRunCostTable(summary, { color }) + "\n");
+  return 0;
 }

@@ -8,6 +8,8 @@ import { runApprove } from "../../src/commands/approve";
 import { runReject } from "../../src/commands/reject";
 import { runPlanStage } from "../../src/runners/plan";
 import type { PlanStageConfig } from "../../src/config/schema";
+import { runCost, summarizeRunCost } from "../../src/commands/cost";
+import { readRunSnapshot } from "../../src/commands/monitor";
 
 const FULL_PIPELINE = `name: full-auto
 stages:
@@ -154,6 +156,46 @@ test("a budget-exceeded run releases its lock, and a second run in the same proj
     const freeAgent = async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } });
     const second = await runCommand(dir, "cheap", { runAgentTask: freeAgent });
     expect(second.stages[0].status).toBe("done");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("aiflow cost per-stage totals reconcile with state.cost after a real mocked run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-cost-e2e-"));
+  try {
+    mkdirSync(join(dir, ".aiflow", "config", "pipelines"), { recursive: true });
+    writeFileSync(
+      join(dir, ".aiflow", "config", "models.yaml"),
+      "profiles:\n  main-dev:\n    channel: opencode\n    provider: x\n    model: y\n  reviewer:\n    channel: http\n    provider: y\n    model: z\n"
+    );
+    writeFileSync(
+      join(dir, ".aiflow", "config", "pipelines", "priced.yaml"),
+      'name: priced\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    per_story_fix_limit: 3\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n'
+    );
+    writeFileSync(
+      join(dir, "prd.json"),
+      JSON.stringify({ branchName: "x", stories: [{ id: "US-1", title: "t", acceptance: [], priority: 1, passes: false, fixCount: 0 }] })
+    );
+    await $`git -C ${dir} init -q`;
+    await $`git -C ${dir} config user.email "test@example.com"`;
+    await $`git -C ${dir} config user.name "Test"`;
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "initial"`;
+
+    // Story starts with passes:false so ralph_loop makes one agent call and produces usage;
+    // the mocked agent then flips it to pass, generating a stage_cost event.
+    const state = await runCommand(dir, "priced", { runAgentTask: async () => ({ ok: true, transcriptPath: "u", usage: { inTok: 5, outTok: 2, costUsd: 0.03 } }) });
+
+    const snap = readRunSnapshot(dir, state.run_id)!;
+    const summary = summarizeRunCost(state.run_id, snap.state, snap.events);
+    // per-stage total reconciles with run-level state.cost
+    expect(summary.totalCostUsd).toBeCloseTo(snap.state.cost.est_usd, 10);
+
+    let out = "";
+    const code = runCost(dir, { runId: state.run_id, color: false, write: (s) => { out += s; } });
+    expect(code).toBe(0);
+    expect(out).toContain("develop");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

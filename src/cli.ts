@@ -256,6 +256,26 @@ program
   });
 
 program
+  .command("cost")
+  .description("Report token and USD cost per stage (default: latest run)")
+  .option("--run-id <id>", "show a specific run (defaults to latest)")
+  .option("--all", "summarize cost across all runs", false)
+  .option("--json", "output structured JSON", false)
+  .option("--csv", "output CSV", false)
+  .option("--no-color", "disable ANSI colors")
+  .action(async (opts: { runId?: string; all: boolean; json: boolean; csv: boolean; color: boolean }) => {
+    const { runCost } = await import("./commands/cost");
+    const code = runCost(process.cwd(), {
+      runId: opts.runId,
+      all: opts.all,
+      json: opts.json,
+      csv: opts.csv,
+      color: opts.color,
+    });
+    process.exitCode = code;
+  });
+
+program
   .command("watch")
   .description("Poll and re-render the current run snapshot every second")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
