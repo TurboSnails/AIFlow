@@ -1,7 +1,8 @@
-import { readdirSync, statSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
+import { listRunIdsByMtimeDesc, loadRun as loadRunState, runsRoot } from "../runs/store";
 
 export interface StageCost {
   stage: string;
@@ -192,33 +193,19 @@ interface LoadedRun {
   events: AiflowEvent[];
 }
 
-function runsRoot(cwd: string): string {
-  return join(cwd, ".aiflow", "runs");
-}
-
-function listRunIdsByMtimeDesc(cwd: string): string[] {
-  const root = runsRoot(cwd);
-  if (!existsSync(root)) return [];
-  const entries = readdirSync(root)
-    .map((id) => ({ id, stat: statSync(join(root, id)) }))
-    .filter((e) => e.stat.isDirectory());
-  entries.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
-  return entries.map((e) => e.id);
+function loadRunEvents(cwd: string, runId: string): AiflowEvent[] {
+  const eventsPath = join(runsRoot(cwd), runId, "events.jsonl");
+  if (!existsSync(eventsPath)) return [];
+  return readFileSync(eventsPath, "utf-8")
+    .split("\n")
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as AiflowEvent);
 }
 
 function loadRun(cwd: string, runId: string): LoadedRun | undefined {
-  const runDir = join(runsRoot(cwd), runId);
-  const statePath = join(runDir, "state.json");
-  if (!existsSync(statePath)) return undefined;
-  const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
-  const eventsPath = join(runDir, "events.jsonl");
-  const events: AiflowEvent[] = existsSync(eventsPath)
-    ? readFileSync(eventsPath, "utf-8")
-        .split("\n")
-        .filter((l) => l.trim().length > 0)
-        .map((l) => JSON.parse(l) as AiflowEvent)
-    : [];
-  return { runId, state, events };
+  const loaded = loadRunState(cwd, runId);
+  if (!loaded) return undefined;
+  return { runId, state: loaded.state, events: loadRunEvents(cwd, runId) };
 }
 
 export function runCost(cwd: string, opts: RunCostOptions): number {

@@ -1,7 +1,8 @@
-import { readdirSync, statSync, existsSync, readFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { statSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
+import { listRunIdsByMtimeDesc } from "../runs/store";
 
 export interface MonitorOptions {
   tail: number;
@@ -108,15 +109,7 @@ function statusColor(status: EngineState["stages"][number]["status"], on: boolea
 }
 
 function pickLatestRun(cwd: string): string | undefined {
-  const runsRoot = join(cwd, ".aiflow", "runs");
-  if (!existsSync(runsRoot)) return undefined;
-  const entries = readdirSync(runsRoot).filter((name) => {
-    const full = join(runsRoot, name);
-    return statSync(full).isDirectory();
-  });
-  if (entries.length === 0) return undefined;
-  entries.sort((a, b) => statSync(join(runsRoot, b)).mtimeMs - statSync(join(runsRoot, a)).mtimeMs);
-  return entries[0];
+  return listRunIdsByMtimeDesc(cwd)[0];
 }
 
 export function readRunSnapshot(cwd: string, runId?: string): RunSnapshot | undefined {
