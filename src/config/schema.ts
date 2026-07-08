@@ -92,6 +92,7 @@ export type StageConfig = z.infer<typeof StageConfigSchema>;
 
 export const BudgetConfigSchema = z.object({
   max_cost_usd: z.number().positive(),
+  warn_at_pct: z.array(z.number().positive().max(1)).optional(),
 });
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 

@@ -245,7 +245,14 @@ export async function runPipelineOnce(
       requirement: opts.requirement,
       stages: pipeline.stages.map((s) => ({ id: s.id, status: "pending" as StageStatus })),
       cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
-      ...(pipeline.budget ? { budget: { limit_usd: pipeline.budget.max_cost_usd } } : {}),
+      ...(pipeline.budget
+        ? {
+            budget: {
+              limit_usd: pipeline.budget.max_cost_usd,
+              ...(pipeline.budget.warn_at_pct ? { warn_at_pct: pipeline.budget.warn_at_pct } : {}),
+            },
+          }
+        : {}),
     };
   }
   writeStateAtomic(runDir, state);
@@ -288,7 +295,7 @@ export async function runPipelineOnce(
     state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "running" } : s)) };
     writeStateAtomic(runDir, state);
 
-    const budgetTracker = createBudgetTracker(state.budget?.limit_usd, state.cost.est_usd);
+    const budgetTracker = createBudgetTracker(state.budget?.limit_usd, state.cost.est_usd, state.budget?.warn_at_pct);
     const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal, budgetTracker);
     state = {
       ...state,

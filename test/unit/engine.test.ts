@@ -517,3 +517,20 @@ test("runPipelineOnce does not write a stage_cost event for a stage that reports
     rmSync(runDir, { recursive: true, force: true });
   }
 });
+
+test("runPipelineOnce persists budget.warn_at_pct into state", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const warnPipeline: PipelineConfig = {
+      ...pipeline,
+      budget: { max_cost_usd: 10, warn_at_pct: [0.5, 0.8] },
+    };
+    const ralphLoop = mock(async () => ({ result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } }));
+    const state = await runPipelineOnce(warnPipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { ralph_loop: ralphLoop },
+    });
+    expect(state.budget).toEqual({ limit_usd: 10, warn_at_pct: [0.5, 0.8] });
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
