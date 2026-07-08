@@ -18,7 +18,8 @@ import {
   callLlmFanOut as realCallLlmFanOut,
   type ReviewerCallResult,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly, isClean } from "../git";
+import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
+import { assertCleanIfAutoClean } from "./dirty-guard";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -61,12 +62,7 @@ export async function runCommand(
     );
   }
 
-  const hasAutoClean = pipelineConfig.stages.some((s) => s.type === "ralph_loop" && s.auto_clean);
-  if (hasAutoClean && !(await isClean(cwd))) {
-    throw new Error(
-      `Pipeline "${pipelineName}" has auto_clean enabled on a ralph_loop stage, but the working tree at ${cwd} is not clean. Commit or stash your changes before running (auto_clean cannot distinguish your uncommitted work from a failed agent attempt).`
-    );
-  }
+  await assertCleanIfAutoClean(cwd, pipelineConfig, pipelineName);
 
   const effectiveRunId = runId ?? createRunId();
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
