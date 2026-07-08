@@ -530,6 +530,8 @@ test("runPipelineOnce persists budget.warn_at_pct into state", async () => {
       runners: { ralph_loop: ralphLoop },
     });
     expect(state.budget).toEqual({ limit_usd: 10, warn_at_pct: [0.5, 0.8] });
+    const persisted = readState(runDir);
+    expect(persisted.budget).toEqual({ limit_usd: 10, warn_at_pct: [0.5, 0.8] });
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
