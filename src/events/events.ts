@@ -101,6 +101,15 @@ export interface StoryAutoCleanedAiflowEvent {
   story: string;
 }
 
+export interface BudgetWarningAiflowEvent {
+  ts: string;
+  type: "budget_warning";
+  stage: string;
+  threshold_pct: number;
+  spent_usd: number;
+  limit_usd: number;
+}
+
 export type AiflowEvent =
   | OpencodeToolUseAiflowEvent
   | OpencodeStepFinishAiflowEvent
@@ -113,7 +122,8 @@ export type AiflowEvent =
   | PlanResultAiflowEvent
   | HumanGateWaitingAiflowEvent
   | HumanGateRejectedAiflowEvent
-  | StoryAutoCleanedAiflowEvent;
+  | StoryAutoCleanedAiflowEvent
+  | BudgetWarningAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");

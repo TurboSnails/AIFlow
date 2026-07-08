@@ -89,3 +89,22 @@ test("appendEvent then readEvents round-trips a stage_cost event", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("budget_warning event round-trips through appendEvent/readEvents", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-test-"));
+  try {
+    const evt: AiflowEvent = {
+      ts: "2026-07-08T00:00:00.000Z",
+      type: "budget_warning",
+      stage: "build",
+      threshold_pct: 0.8,
+      spent_usd: 8.5,
+      limit_usd: 10,
+    };
+    appendEvent(dir, evt);
+    const read = readEvents(dir);
+    expect(read).toEqual([evt]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
