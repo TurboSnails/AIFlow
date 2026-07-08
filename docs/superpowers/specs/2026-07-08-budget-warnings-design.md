@@ -145,7 +145,7 @@ status:读回 budget_warning 事件(专门渲染)+ 预算用量行
 
 - `warn_at_pct` 含 >1 或 ≤0:zod schema 加载期报错(`.positive().max(1)`),不进运行时。
 - 无 `budget` 配置:tracker `limitUsd=undefined`,`drainPendingWarnings()` 恒 `[]`,`record` 恒 false——现有无预算行为完全不变,不打印预算行。
-- resume 已跨阈值:`initialSpentUsd` 预填 `warnedThresholds`,drain 不含历史已跨阈值,不重复告警。
+- resume 已跨阈值:`initialSpentUsd` 预填 `warnedThresholds`,drain 不含历史已跨阈值,不重复告警。此幂等保证是**完成-stage 粒度**:est_usd 仅在 stage 完成后持久化,若某 stage 在写出 budget_warning 后、成本持久化前崩溃,resume 会用较旧的 est_usd 重建 tracker,可能对该阈值重复告警一次。这是 AIFlow 阶段级成本模型的既有特性,视为可接受的限制。
 - 阈值 `1.0` 与 limit 重合:`warn_at_pct: [1.0]` 与 100% 软停同时触发——两者独立(一个写 warning 事件,一个熔断),语义不冲突,允许。
 - 空 `warn_at_pct: []`:合法,等价于无告警。
 - events.jsonl 缺失/state 无 budget:status 优雅省略预算行,不报错。

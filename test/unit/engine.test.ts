@@ -566,6 +566,40 @@ test("runPipelineOnce emits budget_warning when a stage crosses a warn threshold
   }
 });
 
+test("runPipelineOnce does not re-emit budget_warning on resume once the stage is completed", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
+  try {
+    const deps = {
+      runners: {
+        // stage 花费 8 USD,limit 10,跨 0.5 与 0.8 — mirrors how real stage
+        // runners (e.g. ralph-loop.ts) call budget.record() as spend occurs.
+        ralph_loop: async (_stage: any, _stageState: any, _profiles: any, _cwd: any, _runDir: any, _nowFn: any, _signal: any, budget: any) => {
+          budget?.record(8);
+          return { result: "pass", usage: { inTok: 0, outTok: 0, costUsd: 8 } };
+        },
+      },
+      nowFn: () => new Date("2026-07-08T00:00:00.000Z"),
+    } as any;
+    const warnPipeline = {
+      name: "p",
+      budget: { max_cost_usd: 10, warn_at_pct: [0.5, 0.8] },
+      stages: [{ id: "build", type: "ralph_loop" }],
+    } as any;
+
+    await runPipelineOnce(warnPipeline, {}, "/tmp", runDir, deps);
+    const firstWarnings = readEvents(runDir).filter((e) => e.type === "budget_warning");
+    expect(firstWarnings.map((w: any) => w.threshold_pct)).toEqual([0.5, 0.8]);
+
+    // The stage is now "done" (terminal), so a resume run skips re-running it
+    // and must not re-drain/re-emit either threshold's budget_warning.
+    await runPipelineOnce(warnPipeline, {}, "/tmp", runDir, deps, undefined, { resume: true });
+    const warningsAfterResume = readEvents(runDir).filter((e) => e.type === "budget_warning");
+    expect(warningsAfterResume.length).toBe(2);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("runPipelineOnce emits no budget_warning when there is no budget", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-test-"));
   try {

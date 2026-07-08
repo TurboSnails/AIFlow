@@ -326,7 +326,12 @@ export async function runPipelineOnce(
 
     // Best-effort: drain any budget warning thresholds this stage's spend crossed.
     // Detection lives in the tracker (pure); the I/O is centralized here next to
-    // stage_cost. Each threshold warns at most once per run (resume-safe).
+    // stage_cost. Each threshold warns at most once per run at COMPLETED-STAGE
+    // granularity: the per-stage tracker is pre-seeded from the cumulative
+    // state.cost.est_usd, so thresholds crossed in earlier completed stages are
+    // pre-marked and not re-warned. A crash mid-stage (after this append but
+    // before the next stage's cost is persisted) can re-warn on resume, since
+    // est_usd is only persisted at stage boundaries — an accepted limitation.
     for (const thresholdPct of budgetTracker.drainPendingWarnings()) {
       const limitUsd = state.budget?.limit_usd ?? 0;
       appendEvent(runDir, {
