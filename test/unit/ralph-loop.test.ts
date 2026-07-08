@@ -763,6 +763,7 @@ test("a failed agent call still records its cost in the budget tracker (without 
     const budget: BudgetTracker = {
       limitUsd: undefined,
       record: (delta: number) => { recorded.push(delta); return false; },
+      drainPendingWarnings: () => [],
     };
     const runAgentTask = mock(async () => ({ ok: false, transcriptPath: "unused", usage: { inTok: 3, outTok: 1, costUsd: 0.4 } }));
     const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
@@ -792,6 +793,7 @@ test("a config-tamper iteration still records its cost in the budget tracker (wi
     const budget: BudgetTracker = {
       limitUsd: undefined,
       record: (delta: number) => { recorded.push(delta); return false; },
+      drainPendingWarnings: () => [],
     };
     let hashCall = 0;
     const hashConfigDir = mock(() => {
