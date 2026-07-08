@@ -17,7 +17,7 @@
 - `clean` 破坏性安全:默认无条件(before/status/keep 全空)不删,退出 1;活跃 run(非终态 state 或 run.lock 指向)永不删;非终态状态永不删;实删默认需交互确认(`--yes` 跳过);`--dry-run` 预览;非 TTY 无 `--yes` 拒绝退出 1。
 - CSV 用 RFC 4180 转义(`/[",\r\n]/` → 双引号包裹、内部 `"`→`""`);表格/JSON/CSV/`--no-color` 与 `cost` 命令风格一致。
 - 复用改造以"行为不变 + cost/monitor 现有测试全绿"为准绳,不改这两个命令的输出。
-- `summarizeRunStatus` 状态 token 取值域:`failed | aborted | paused | waiting_human | running | pending | done`。
+- `summarizeRunStatus` 状态 token 取值域:`failed | aborted | suspended | paused | waiting_human | running | pending | done`(`suspended` 独立成 token,不并入 `done`,以免 `clean --status done` 误删挂起 run)。
 - 终态集合(engine `TERMINAL_STATUSES`):`done | failed | aborted | suspended`。`--status` 仅接受 `done | failed | aborted`。
 
 ---
@@ -149,6 +149,7 @@ test("summarizeRunStatus tokens", () => {
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }] }))).toBe("done");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "failed" }] }))).toBe("failed");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "aborted" }] }))).toBe("aborted");
+  expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "suspended" }] }))).toBe("suspended");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "done" }, { id: "b", status: "paused" }] }))).toBe("paused");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "running" }] }))).toBe("running");
   expect(summarizeRunStatus(makeState({ stages: [{ id: "a", status: "pending" }] }))).toBe("pending");
@@ -225,12 +226,14 @@ export function isRunActive(cwd: string, runId: string, state: EngineState): boo
   return lockedRunId(cwd) === runId;
 }
 
-/** Compact overall status token for list views. */
+/** Compact overall status token for list views. suspended stays its own token
+ *  (not folded into "done") so `clean --status done` never sweeps a suspended run. */
 export function summarizeRunStatus(state: EngineState): string {
   const firstNonTerminal = state.stages.find((s) => !TERMINAL_STATUSES.has(s.status));
   if (firstNonTerminal) return firstNonTerminal.status;
   if (state.stages.some((s) => s.status === "failed")) return "failed";
   if (state.stages.some((s) => s.status === "aborted")) return "aborted";
+  if (state.stages.some((s) => s.status === "suspended")) return "suspended";
   return "done";
 }
 ```

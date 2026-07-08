@@ -47,7 +47,7 @@ export function loadRun(cwd: string, runId: string): LoadedRun | undefined;
 /** 双重保护:state 有任何非终态 stage,或 .aiflow/run.lock 的 run_id 指向该 run。 */
 export function isRunActive(cwd: string, runId: string, state: EngineState): boolean;
 
-/** 紧凑整体状态 token:failed | aborted | paused | waiting_human | running | pending | done。 */
+/** 紧凑整体状态 token:failed | aborted | suspended | paused | waiting_human | running | pending | done。 */
 export function summarizeRunStatus(state: EngineState): string;
 ```
 
@@ -57,7 +57,7 @@ export function summarizeRunStatus(state: EngineState): string;
   - state 侧:`state.stages.some(s => !TERMINAL_STATUSES.has(s.status))`(复用 engine 的 `TERMINAL_STATUSES`)。
   - 锁侧:读 `.aiflow/run.lock`(store 内部自建小 helper:`existsSync` → `readFileSync`+`JSON.parse` 包 try/catch,失败视作无锁),比对其 `run_id === runId`。lock.ts 的 `lockPath`/`defaultReadLock` 是模块私有,不复用,避免耦合并发逻辑。
   - 任一为真即活跃。
-- **`summarizeRunStatus`**:取第一个非终态 stage 的 status;若全终态,则存在 `failed` → `"failed"`,存在 `aborted` → `"aborted"`,否则 `"done"`。给列表用紧凑词;不复用 `summarizePipelineOutcome`(那返回整句 `{line, exitCode}`,是给 run/resume 结束语用的)。
+- **`summarizeRunStatus`**:取第一个非终态 stage 的 status;若全终态,则存在 `failed` → `"failed"`,存在 `aborted` → `"aborted"`,存在 `suspended` → `"suspended"`,否则 `"done"`。给列表用紧凑词;不复用 `summarizePipelineOutcome`(那返回整句 `{line, exitCode}`,是给 run/resume 结束语用的)。`suspended` 独立成 token(不并入 `done`),避免 `clean --status done` 误删挂起的 run。
 
 ### 组件 2:`aiflow runs`(`src/commands/runs.ts`)
 
