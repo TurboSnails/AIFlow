@@ -1,0 +1,127 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { buildRunRows, type RunRow } from "./runs";
+import { runsRoot } from "../runs/store";
+
+const CLEANABLE_STATUSES = new Set(["done", "failed", "aborted"]);
+
+export interface CleanOptions {
+  before?: string;
+  status?: string;
+  keep?: number;
+  dryRun?: boolean;
+  yes?: boolean;
+  color?: boolean;
+  write?: (s: string) => void;
+  writeErr?: (s: string) => void;
+  confirm?: () => boolean;
+}
+
+/** Parse a --before value: "Nd" relative days, or an ISO date. undefined when unparseable. */
+export function parseBefore(value: string, now: Date): Date | undefined {
+  const rel = /^(\d+)d$/.exec(value);
+  if (rel) {
+    return new Date(now.getTime() - Number(rel[1]) * 86400_000);
+  }
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return undefined;
+  return new Date(t);
+}
+
+/** Pure selection. Active runs and non-cleanable statuses are never candidates. */
+export function selectRunsToClean(
+  rows: RunRow[],
+  filters: { before?: Date; status?: string; keep?: number },
+): { toDelete: RunRow[]; kept: RunRow[] } {
+  let candidates = rows.filter((r) => !r.active && CLEANABLE_STATUSES.has(r.status));
+  if (filters.status) candidates = candidates.filter((r) => r.status === filters.status);
+  if (filters.before) candidates = candidates.filter((r) => r.mtimeMs < filters.before!.getTime());
+
+  const kept: RunRow[] = [];
+  let toDelete = candidates;
+  if (filters.keep !== undefined) {
+    const sorted = [...candidates].sort((a, b) => b.mtimeMs - a.mtimeMs);
+    kept.push(...sorted.slice(0, filters.keep));
+    toDelete = sorted.slice(filters.keep);
+  }
+  return { toDelete, kept };
+}
+
+function defaultConfirm(): boolean {
+  // Non-interactive by default in this codebase's tests; real TTY confirm is
+  // gated by --yes at the command layer, so this path is only hit interactively.
+  return false;
+}
+
+export function runClean(cwd: string, opts: CleanOptions): number {
+  const write = opts.write ?? ((s) => process.stdout.write(s));
+  const writeErr = opts.writeErr ?? ((s) => process.stderr.write(s));
+
+  // Validate --status
+  if (opts.status !== undefined && !CLEANABLE_STATUSES.has(opts.status)) {
+    writeErr(`Invalid --status "${opts.status}" (must be one of: done, failed, aborted)\n`);
+    return 1;
+  }
+  // Validate --keep
+  if (opts.keep !== undefined && (!Number.isInteger(opts.keep) || opts.keep < 0)) {
+    writeErr(`Invalid --keep "${opts.keep}" (must be a non-negative integer)\n`);
+    return 1;
+  }
+  // Parse --before
+  let before: Date | undefined;
+  if (opts.before !== undefined) {
+    before = parseBefore(opts.before, new Date());
+    if (!before) {
+      writeErr(`Invalid --before "${opts.before}" (use "<N>d" or an ISO date)\n`);
+      return 1;
+    }
+  }
+  // Require at least one filter
+  if (opts.before === undefined && opts.status === undefined && opts.keep === undefined) {
+    writeErr("clean requires at least one of --before, --status, --keep\n");
+    return 1;
+  }
+
+  const rows = buildRunRows(cwd);
+  if (rows.length === 0) {
+    writeErr(`No runs found in ${runsRoot(cwd)}\n`);
+    return 1;
+  }
+
+  const { toDelete } = selectRunsToClean(rows, { before, status: opts.status, keep: opts.keep });
+  if (toDelete.length === 0) {
+    write("Nothing to clean\n");
+    return 0;
+  }
+
+  write(`Run(s) to delete:\n`);
+  for (const r of toDelete) write(`  ${r.runId}  ${r.status}\n`);
+
+  if (opts.dryRun) {
+    write(`Would delete ${toDelete.length} run(s)\n`);
+    return 0;
+  }
+
+  // Confirmation gate
+  if (!opts.yes) {
+    const confirmFn = opts.confirm;
+    if (!confirmFn) {
+      // No injected confirm and not --yes: refuse in non-interactive contexts.
+      if (!process.stdin.isTTY) {
+        writeErr("refusing to delete without --yes (non-interactive)\n");
+        return 1;
+      }
+    }
+    const confirmed = (confirmFn ?? defaultConfirm)();
+    if (!confirmed) {
+      write("Aborted\n");
+      return 0;
+    }
+  }
+
+  for (const r of toDelete) {
+    rmSync(join(runsRoot(cwd), r.runId), { recursive: true, force: true });
+  }
+  write(`Deleted ${toDelete.length} run(s)\n`);
+  return 0;
+}

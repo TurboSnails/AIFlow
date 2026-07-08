@@ -296,6 +296,33 @@ program
   });
 
 program
+  .command("clean")
+  .description("Delete terminal run directories (active runs are never deleted)")
+  .option("--before <when>", "delete runs older than this (\"<N>d\" or an ISO date)")
+  .option("--status <status>", "only delete runs with this terminal status (done|failed|aborted)")
+  .option("--keep <n>", "keep the newest N matching runs", (v) => Number(v))
+  .option("--dry-run", "show what would be deleted without deleting", false)
+  .option("--yes", "skip the confirmation prompt", false)
+  .option("--no-color", "disable ANSI colors")
+  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; color: boolean }) => {
+    const { runClean } = await import("./commands/clean");
+    const confirm = () => {
+      if (opts.yes) return true;
+      const answer = prompt("Delete these runs? (y/N)");
+      return answer?.trim().toLowerCase() === "y";
+    };
+    process.exitCode = runClean(process.cwd(), {
+      before: opts.before,
+      status: opts.status,
+      keep: opts.keep,
+      dryRun: opts.dryRun,
+      yes: opts.yes,
+      color: opts.color,
+      confirm: opts.yes ? undefined : confirm,
+    });
+  });
+
+program
   .command("watch")
   .description("Poll and re-render the current run snapshot every second")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
