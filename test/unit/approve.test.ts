@@ -149,3 +149,44 @@ test("runApprove stops with a paused downstream stage when given an already-abor
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+function setupWaitingRun(autoClean: boolean): { cwd: string; runId: string; runDir: string; stateJson: string } {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-approve-dirty-"));
+  mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
+  writeFileSync(
+    join(cwd, ".aiflow", "config", "models.yaml"),
+    "profiles:\n  main-dev:\n    channel: opencode\n    provider: x\n    model: y\n  reviewer:\n    channel: http\n    provider: y\n    model: z\n"
+  );
+  writeFileSync(
+    join(cwd, ".aiflow", "config", "pipelines", "gated.yaml"),
+    `name: gated\nstages:\n  - id: confirm\n    type: human_gate\n    prompt: "ok?"\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    per_story_fix_limit: 3\n    auto_clean: ${autoClean}\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+  );
+  const runId = "20260708_130000_abcd12";
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  mkdirSync(runDir, { recursive: true });
+  const stateJson = JSON.stringify({
+    run_id: runId,
+    pipeline: "gated",
+    stages: [
+      { id: "confirm", status: "waiting_human" },
+      { id: "develop", status: "pending" },
+    ],
+    cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+  });
+  writeFileSync(join(runDir, "state.json"), stateJson);
+  return { cwd, runId, runDir, stateJson };
+}
+
+test("approve rejects a dirty tree for an auto_clean pipeline without recording the approval", async () => {
+  const { cwd, runId, runDir, stateJson } = setupWaitingRun(true);
+  try {
+    await expect(
+      runApprove(cwd, { runId }, undefined, undefined, async () => false)
+    ).rejects.toThrow(/auto_clean enabled on a ralph_loop stage/);
+    // state.json 未被改动：confirm 仍是 waiting_human，approval 没落盘。
+    const after = readFileSync(join(runDir, "state.json"), "utf-8");
+    expect(after).toBe(stateJson);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

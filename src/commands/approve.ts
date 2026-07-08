@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import { runPipelineOnce, type EngineDeps } from "../engine/engine";
 import { writeStateAtomic, type EngineState } from "../engine/state";
+import { assertCleanIfAutoClean } from "./dirty-guard";
 
 export interface ApproveResult {
   status: "resumed" | "no_runs" | "missing_run_dir" | "no_waiting_stage" | "ambiguous_stage" | "stage_not_waiting";
@@ -24,7 +25,8 @@ export async function runApprove(
   cwd: string,
   opts: { runId?: string; stage?: string },
   deps?: EngineDeps,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  isCleanFn?: (cwd: string) => Promise<boolean>
 ): Promise<ApproveResult> {
   const runId = opts.runId ?? pickLatestRun(cwd);
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
@@ -53,11 +55,13 @@ export async function runApprove(
     targetIndex = state.stages.findIndex((s) => s.id === waitingStages[0].id);
   }
 
-  state.stages[targetIndex] = { id: state.stages[targetIndex].id, status: "done" };
-  writeStateAtomic(runDir, state);
-
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${state.pipeline}.yaml`));
+
+  await assertCleanIfAutoClean(cwd, pipelineConfig, state.pipeline, isCleanFn);
+
+  state.stages[targetIndex] = { id: state.stages[targetIndex].id, status: "done" };
+  writeStateAtomic(runDir, state);
 
   const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, signal, { resume: true });
 
