@@ -324,6 +324,24 @@ export async function runPipelineOnce(
       });
     }
 
+    // Best-effort: drain any budget warning thresholds this stage's spend crossed.
+    // Detection lives in the tracker (pure); the I/O is centralized here next to
+    // stage_cost. Each threshold warns at most once per run (resume-safe).
+    for (const thresholdPct of budgetTracker.drainPendingWarnings()) {
+      const limitUsd = state.budget?.limit_usd ?? 0;
+      appendEvent(runDir, {
+        ts: nowFn().toISOString(),
+        type: "budget_warning",
+        stage: stage.id,
+        threshold_pct: thresholdPct,
+        spent_usd: state.cost.est_usd,
+        limit_usd: limitUsd,
+      });
+      process.stderr.write(
+        `Budget warning: spent $${state.cost.est_usd.toFixed(4)} / $${limitUsd.toFixed(4)} (${Math.round(thresholdPct * 100)}% of limit) at stage ${stage.id}\n`,
+      );
+    }
+
     // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
     if (execResult.state.status !== "done") {
       break;
