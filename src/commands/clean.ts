@@ -22,7 +22,6 @@ export interface CleanOptions {
   keep?: number;
   dryRun?: boolean;
   yes?: boolean;
-  color?: boolean;
   write?: (s: string) => void;
   writeErr?: (s: string) => void;
   confirm?: () => boolean;

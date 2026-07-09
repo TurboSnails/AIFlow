@@ -303,8 +303,7 @@ program
   .option("--keep <n>", "keep the newest N matching runs", (v) => Number(v))
   .option("--dry-run", "show what would be deleted without deleting", false)
   .option("--yes", "skip the confirmation prompt", false)
-  .option("--no-color", "disable ANSI colors")
-  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; color: boolean }) => {
+  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean }) => {
     const { runClean } = await import("./commands/clean");
     const confirm = process.stdin.isTTY
       ? () => {
@@ -318,7 +317,6 @@ program
       keep: opts.keep,
       dryRun: opts.dryRun,
       yes: opts.yes,
-      color: opts.color,
       confirm: opts.yes ? undefined : confirm,
     });
   });

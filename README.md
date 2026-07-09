@@ -58,8 +58,12 @@ MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts status
 | `aiflow reject` | Reject a stage that is `waiting_human`, aborting the pipeline (`--run-id`, `--stage`, `--reason`) |
 | `aiflow status` | Render a one-shot read-only snapshot of the latest run |
 | `aiflow watch` | Re-render the same snapshot every second (Ctrl+C to exit) |
+| `aiflow runs` | List all historical runs: id, pipeline, status, cost, age (`--json`, `--csv`, `--no-color`) |
+| `aiflow clean` | Delete terminal run directories; active and non-terminal runs are never deleted (`--before`, `--status`, `--keep`, `--dry-run`, `--yes`) |
 
 `aiflow status` and `aiflow watch` accept `--run-id <id>`, `--tail <n>`, and (for `status`) `--stall-timeout <s>` and `--no-color`.
+
+`aiflow runs` is read-only and never acquires the run lock; it lists runs newest-first and marks the active (running or lock-held) run with `*`. `aiflow clean` is destructive and requires at least one filter: `--before "<N>d"` or an ISO date, `--status done|failed|aborted`, or `--keep <n>`. It hard-excludes active runs and any run whose status is not terminal (`done`/`failed`/`aborted`); use `--dry-run` to preview and `--yes` to skip the confirmation prompt. In non-TTY contexts `aiflow clean` refuses to delete without `--yes`.
 
 `aiflow run` also accepts `--requirement <text>` (inline requirement text) or `--requirement-file <path>` (path to a file with the requirement text) — mutually exclusive — for pipelines whose first stage is `brainstorm` or `spec`.
 
@@ -193,7 +197,9 @@ A subsequent plan (`docs/superpowers/specs/2026-07-06-multi-stage-pipeline-runne
 
 A follow-up (`docs/superpowers/specs/2026-07-07-workflow-pipeline-templates-design.md`) added the `superpowers`/`spec-superflow`/`openspec` pipeline templates to `aiflow init`, alongside the existing `ralph-only`.
 
-Not yet implemented: budget tracking/auto-pause on `budget.max_cost_usd`, re-running a prior stage after a `human_gate` rejection (reject currently just aborts the pipeline), and `doctor` connectivity checks for the newer profile/stage types — see `docs/superpowers/` for the full roadmap.
+Subsequent work added budget tracking/auto-pause on `budget.max_cost_usd` with optional percentage warnings (`budget.warn_at_pct`), cost observability via `aiflow cost`, and ops commands `aiflow runs` / `aiflow clean` for managing historical run directories.
+
+Not yet implemented: re-running a prior stage after a `human_gate` rejection (reject currently just aborts the pipeline), and `doctor` connectivity checks for the newer profile/stage types — see `docs/superpowers/` for the full roadmap.
 
 ---
 
