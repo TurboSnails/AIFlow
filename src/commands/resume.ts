@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { listRunIdsByMtimeDesc } from "../runs/store";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import type { ModelProfile } from "../config/schema";
 import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/engine";
@@ -13,15 +14,6 @@ export interface ResumeResult {
   runId?: string;
 }
 
-function pickLatestRun(cwd: string): string | undefined {
-  const root = join(cwd, ".aiflow", "runs");
-  if (!existsSync(root)) return undefined;
-  const entries = readdirSync(root).filter((n) => statSync(join(root, n)).isDirectory());
-  if (entries.length === 0) return undefined;
-  entries.sort((a, b) => statSync(join(root, b)).mtimeMs - statSync(join(root, a)).mtimeMs);
-  return entries[0];
-}
-
 export async function runResume(
   cwd: string,
   opts: { runId?: string; pipeline?: string; force?: boolean; raiseBudget?: number },
@@ -29,7 +21,7 @@ export async function runResume(
   signal?: AbortSignal,
   isCleanFn?: (cwd: string) => Promise<boolean>
 ): Promise<ResumeResult> {
-  const runId = opts.runId ?? pickLatestRun(cwd);
+  const runId = opts.runId ?? listRunIdsByMtimeDesc(cwd)[0];
   if (!runId) return { status: "no_runs", message: `No .aiflow/runs found in ${cwd}` };
   const runDir = join(cwd, ".aiflow", "runs", runId);
   const statePath = join(runDir, "state.json");

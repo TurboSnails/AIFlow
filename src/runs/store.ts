@@ -13,14 +13,21 @@ export function runsRoot(cwd: string): string {
   return join(cwd, ".aiflow", "runs");
 }
 
-/** List run dirs under .aiflow/runs newest-first; stat each dir once; [] when root missing. */
+/** List run dirs under .aiflow/runs newest-first; stat each dir once; [] when root missing.
+ *  A race where a dir vanishes between readdir and stat is treated as "not a directory". */
 export function listRunIdsByMtimeDesc(cwd: string): string[] {
   const root = runsRoot(cwd);
   if (!existsSync(root)) return [];
-  const entries = readdirSync(root)
-    .map((id) => ({ id, stat: statSync(join(root, id)) }))
-    .filter((e) => e.stat.isDirectory());
-  entries.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+  const entries: { id: string; mtimeMs: number }[] = [];
+  for (const id of readdirSync(root)) {
+    try {
+      const stat = statSync(join(root, id));
+      if (stat.isDirectory()) entries.push({ id, mtimeMs: stat.mtimeMs });
+    } catch {
+      // ignore entries that disappear or are unreadable mid-listing
+    }
+  }
+  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return entries.map((e) => e.id);
 }
 
