@@ -47,7 +47,7 @@ export function loadRun(cwd: string, runId: string): LoadedRun | undefined {
 
 /** Read the run.lock's run_id, or undefined when absent/unreadable. Local read-only
  *  helper — does not depend on lock.ts internals (avoids coupling to concurrency logic). */
-function lockedRunId(cwd: string): string | undefined {
+export function lockedRunId(cwd: string): string | undefined {
   const lockPath = join(cwd, ".aiflow", "run.lock");
   if (!existsSync(lockPath)) return undefined;
   try {
@@ -58,11 +58,12 @@ function lockedRunId(cwd: string): string | undefined {
   }
 }
 
-/** Active when the state has any non-terminal stage OR run.lock points to this run. */
-export function isRunActive(cwd: string, runId: string, state: EngineState): boolean {
+/** Active when the state has any non-terminal stage OR run.lock points to this run.
+ *  `lockRunId` is optional; when omitted the lock is read on every call. */
+export function isRunActive(cwd: string, runId: string, state: EngineState, lockRunId?: string): boolean {
   const hasNonTerminal = state.stages.some((s) => !TERMINAL_STATUSES.has(s.status));
   if (hasNonTerminal) return true;
-  return lockedRunId(cwd) === runId;
+  return (lockRunId ?? lockedRunId(cwd)) === runId;
 }
 
 /** Compact overall status token for list views. */

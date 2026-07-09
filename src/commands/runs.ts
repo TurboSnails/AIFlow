@@ -4,6 +4,7 @@ import {
   isRunActive,
   summarizeRunStatus,
   runsRoot,
+  lockedRunId,
 } from "../runs/store";
 
 export interface RunRow {
@@ -46,6 +47,7 @@ function relAge(mtimeMs: number, now: number): string {
 
 export function buildRunRows(cwd: string): RunRow[] {
   const rows: RunRow[] = [];
+  const lockRunId = lockedRunId(cwd);
   for (const runId of listRunIdsByMtimeDesc(cwd)) {
     const loaded = loadRun(cwd, runId);
     if (!loaded) continue;
@@ -55,7 +57,7 @@ export function buildRunRows(cwd: string): RunRow[] {
       status: summarizeRunStatus(loaded.state),
       estUsd: loaded.state.cost.est_usd,
       mtimeMs: loaded.mtimeMs,
-      active: isRunActive(cwd, runId, loaded.state),
+      active: isRunActive(cwd, runId, loaded.state, lockRunId),
     });
   }
   return rows;
