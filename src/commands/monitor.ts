@@ -1,8 +1,9 @@
-import { statSync, existsSync, readFileSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
-import { listRunIdsByMtimeDesc } from "../runs/store";
+import { readEvents } from "../events/events";
+import { listRunIdsByMtimeDesc, loadRun } from "../runs/store";
 
 export interface MonitorOptions {
   tail: number;
@@ -108,28 +109,26 @@ function statusColor(status: EngineState["stages"][number]["status"], on: boolea
   return c(map[status], on, status);
 }
 
-function pickLatestRun(cwd: string): string | undefined {
-  return listRunIdsByMtimeDesc(cwd)[0];
-}
-
 export function readRunSnapshot(cwd: string, runId?: string): RunSnapshot | undefined {
-  const resolvedRunId = runId ?? pickLatestRun(cwd);
+  const resolvedRunId = runId ?? listRunIdsByMtimeDesc(cwd)[0];
   if (!resolvedRunId) return undefined;
+
+  const loaded = loadRun(cwd, resolvedRunId);
+  if (!loaded) return undefined;
+
   const runDir = join(cwd, ".aiflow", "runs", resolvedRunId);
-  const statePath = join(runDir, "state.json");
-  const eventsPath = join(runDir, "events.jsonl");
-  if (!existsSync(statePath)) return undefined;
+  const events = readEvents(runDir);
 
-  const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
-  const events: AiflowEvent[] = existsSync(eventsPath)
-    ? readFileSync(eventsPath, "utf-8")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as AiflowEvent)
-    : [];
+  // Prefer state.json birthtime when available; fall back to run dir mtime.
+  let startedAt = new Date(loaded.mtimeMs);
+  try {
+    const st = statSync(join(runDir, "state.json"));
+    if (st.birthtimeMs > 0) startedAt = new Date(st.birthtimeMs);
+  } catch {
+    // keep loaded.mtimeMs fallback
+  }
 
-  const startedAt = statSync(statePath).birthtime;
-  return { runId: resolvedRunId, runDir, startedAt, state, events };
+  return { runId: resolvedRunId, runDir, startedAt, state: loaded.state, events };
 }
 
 function formatTime(iso: string, now: Date): string {

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEvent, readEvents, type AiflowEvent } from "../../src/events/events";
@@ -85,6 +85,31 @@ test("appendEvent then readEvents round-trips a stage_cost event", () => {
     appendEvent(dir, e);
     const events = readEvents(dir);
     expect(events).toEqual([e]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readEvents returns an empty array when events.jsonl is missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-missing-"));
+  try {
+    expect(readEvents(dir)).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readEvents skips corrupt lines and keeps valid ones", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-events-corrupt-"));
+  try {
+    writeFileSync(
+      join(dir, "events.jsonl"),
+      '{"ts":"2026-07-05T00:00:00.000Z","type":"story_result","story":"US-1","result":"pass"}\nnot json\n\n{"ts":"2026-07-05T00:00:01.000Z","type":"story_result","story":"US-2","result":"fail"}\n',
+    );
+    const events = readEvents(dir);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ story: "US-1", result: "pass" });
+    expect(events[1]).toMatchObject({ story: "US-2", result: "fail" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

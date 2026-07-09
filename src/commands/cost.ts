@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readEvents } from "../events/events";
 import { join } from "node:path";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
@@ -193,19 +193,10 @@ interface LoadedRun {
   events: AiflowEvent[];
 }
 
-function loadRunEvents(cwd: string, runId: string): AiflowEvent[] {
-  const eventsPath = join(runsRoot(cwd), runId, "events.jsonl");
-  if (!existsSync(eventsPath)) return [];
-  return readFileSync(eventsPath, "utf-8")
-    .split("\n")
-    .filter((l) => l.trim().length > 0)
-    .map((l) => JSON.parse(l) as AiflowEvent);
-}
-
 function loadRun(cwd: string, runId: string): LoadedRun | undefined {
   const loaded = loadRunState(cwd, runId);
   if (!loaded) return undefined;
-  return { runId, state: loaded.state, events: loadRunEvents(cwd, runId) };
+  return { runId, state: loaded.state, events: readEvents(join(runsRoot(cwd), runId)) };
 }
 
 export function runCost(cwd: string, opts: RunCostOptions): number {

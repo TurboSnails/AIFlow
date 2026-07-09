@@ -133,12 +133,24 @@ export function appendEvent(runDir: string, event: AiflowEvent): void {
   appendFileSync(eventsPath(runDir), JSON.stringify(event) + "\n");
 }
 
+/** Read events.jsonl; skip missing/unreadable files and any corrupt lines. Never throws. */
 export function readEvents(runDir: string): AiflowEvent[] {
   const path = eventsPath(runDir);
   if (!existsSync(path)) return [];
-  const raw = readFileSync(path, "utf-8");
-  return raw
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as AiflowEvent);
+  try {
+    const raw = readFileSync(path, "utf-8");
+    return raw
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as AiflowEvent;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((e): e is AiflowEvent => e !== undefined);
+  } catch {
+    return [];
+  }
 }

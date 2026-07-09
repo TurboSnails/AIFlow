@@ -167,6 +167,24 @@ describe("readRunSnapshot", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test("readRunSnapshot skips corrupt event lines instead of crashing", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "aiflow-mon-corrupt-"));
+    const runDir = join(cwd, ".aiflow", "runs", "run-corrupt");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "state.json"), JSON.stringify(SAMPLE_STATE));
+    writeFileSync(
+      join(runDir, "events.jsonl"),
+      JSON.stringify(SAMPLE_EVENTS[0]) + "\nnot json\n" + JSON.stringify(SAMPLE_EVENTS[1]) + "\n",
+    );
+    try {
+      const snap = readRunSnapshot(cwd);
+      expect(snap).toBeDefined();
+      expect(snap!.events).toHaveLength(2);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("detectStall", () => {
