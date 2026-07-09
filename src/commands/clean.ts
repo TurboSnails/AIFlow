@@ -108,7 +108,15 @@ export function runClean(cwd: string, opts: CleanOptions): number {
   }
 
   write(`Run(s) to delete:\n`);
-  for (const r of toDelete) write(`  ${r.runId}  ${r.status}  ${formatAge(r.mtimeMs, now)}\n`);
+  const runW = Math.max(20, ...toDelete.map((r) => r.runId.length));
+  const pipeW = Math.max(10, ...toDelete.map((r) => r.pipeline.length));
+  const statusW = Math.max(8, ...toDelete.map((r) => r.status.length));
+  const header = `  ${"Run".padEnd(runW)}  ${"Pipeline".padEnd(pipeW)}  ${"Status".padEnd(statusW)}  ${"Cost".padStart(10)}  Age`;
+  write(header + "\n");
+  for (const r of toDelete) {
+    const cost = `$${r.estUsd.toFixed(4)}`.padStart(10);
+    write(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${cost}  ${formatAge(r.mtimeMs, now)}\n`);
+  }
 
   if (opts.dryRun) {
     write(`Would delete ${toDelete.length} run(s)\n`);
