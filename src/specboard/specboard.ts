@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../atomic/atomic-write";
+import { SpecBoardSchema } from "./schema";
 import type { SpecBoard, OpenQuestion, Decision, ReviewVerdictEntry } from "./types";
 
 const BOARD_FILE = "specboard.json";
@@ -16,10 +17,11 @@ function defaultBoard(): SpecBoard {
 export function readSpecBoard(runDir: string): SpecBoard {
   const path = boardPath(runDir);
   if (!existsSync(path)) return defaultBoard();
-  return JSON.parse(readFileSync(path, "utf-8")) as SpecBoard;
+  return SpecBoardSchema.parse(JSON.parse(readFileSync(path, "utf-8")));
 }
 
 export function writeSpecBoard(runDir: string, board: SpecBoard): void {
+  SpecBoardSchema.parse(board);
   writeFileAtomic(boardPath(runDir), JSON.stringify(board, null, 2));
 }
 
