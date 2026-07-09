@@ -5,6 +5,7 @@ import {
   summarizeRunStatus,
   runsRoot,
   lockedRunId,
+  formatRunAge,
 } from "../runs/store";
 
 export interface RunRow {
@@ -34,15 +35,6 @@ function usd(n: number): string {
 function escapeCsv(field: string): string {
   if (/[",\r\n]/.test(field)) return `"${field.replace(/"/g, '""')}"`;
   return field;
-}
-function relAge(mtimeMs: number, now: number): string {
-  const s = Math.max(0, Math.floor((now - mtimeMs) / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
 }
 
 export function buildRunRows(cwd: string): RunRow[] {
@@ -77,7 +69,7 @@ export function renderRunsTable(rows: RunRow[], now: number, opts: { color?: boo
   for (const r of rows) {
     if (r.active) anyActive = true;
     const mark = r.active ? " *" : "";
-    lines.push(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${usd(r.estUsd).padStart(10)}  ${relAge(r.mtimeMs, now).padStart(6)}${mark}`);
+    lines.push(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${usd(r.estUsd).padStart(10)}  ${formatRunAge(r.mtimeMs, now).padStart(6)}${mark}`);
   }
   if (anyActive) {
     lines.push(paint("gray", color, "  * active (running or lock-held)"));

@@ -1,20 +1,9 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { buildRunRows, type RunRow } from "./runs";
-import { runsRoot } from "../runs/store";
+import { runsRoot, formatRunAge } from "../runs/store";
 
 const CLEANABLE_STATUSES = new Set(["done", "failed", "aborted"]);
-
-function formatAge(mtimeMs: number, now: Date): string {
-  const diff = Math.max(0, now.getTime() - mtimeMs);
-  const days = Math.floor(diff / 86400_000);
-  if (days >= 1) return `${days}d`;
-  const hours = Math.floor(diff / 3600_000);
-  if (hours >= 1) return `${hours}h`;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes >= 1) return `${minutes}m`;
-  return `${Math.floor(diff / 1000)}s`;
-}
 
 export interface CleanOptions {
   before?: string;
@@ -115,7 +104,7 @@ export function runClean(cwd: string, opts: CleanOptions): number {
   write(header + "\n");
   for (const r of toDelete) {
     const cost = `$${r.estUsd.toFixed(4)}`.padStart(10);
-    write(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${cost}  ${formatAge(r.mtimeMs, now)}\n`);
+    write(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${cost}  ${formatRunAge(r.mtimeMs, now.getTime())}\n`);
   }
 
   if (opts.dryRun) {
