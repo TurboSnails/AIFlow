@@ -5,6 +5,41 @@ import type { RunLock } from "./lock";
 const program = new Command();
 program.name("aiflow").description("AIFlow pipeline orchestrator CLI").version("0.1.0");
 
+/** Acquire the run lock with the standard CLI messaging/SIGINT handling, run the
+ *  provided callback while holding the lock, and release the lock afterwards.
+ *  Returns `undefined` if the user aborted while waiting (sets exitCode to 1). */
+async function withRunLock<T>(
+  cwd: string,
+  runId: string,
+  fn: (lock: RunLock, controller: AbortController) => T | Promise<T>,
+): Promise<T | undefined> {
+  const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+  let lock: RunLock;
+  try {
+    lock = await acquireRunLock(cwd, runId, {
+      signal: controller.signal,
+      onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+      onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+    });
+  } catch (err) {
+    process.removeListener("SIGINT", onSigint);
+    if (err instanceof LockWaitAbortedError) {
+      process.exitCode = 1;
+      return undefined;
+    }
+    throw err;
+  }
+  try {
+    return await fn(lock, controller);
+  } finally {
+    lock.release();
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
 program
   .command("doctor")
   .description("Check environment: OpenCode, reviewer API key, git status")
@@ -62,50 +97,29 @@ program
     }
     const { runCommand } = await import("./commands/run");
     const { summarizePipelineOutcome, createRunId } = await import("./engine/engine");
-    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
-    const controller = new AbortController();
-    const onSigint = () => controller.abort();
-    process.once("SIGINT", onSigint);
     const runId = createRunId();
-    let lock: RunLock;
-    try {
-      lock = await acquireRunLock(process.cwd(), runId, {
-        signal: controller.signal,
-        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
-        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
-      });
-    } catch (err) {
-      if (err instanceof LockWaitAbortedError) {
+    const done = await withRunLock(process.cwd(), runId, async (lock, controller) => {
+      try {
+        const state = await runCommand(
+          process.cwd(),
+          opts.pipeline,
+          {},
+          { requirement: opts.requirement, requirementFile: opts.requirementFile },
+          controller.signal,
+          runId
+        );
+        const outcome = summarizePipelineOutcome(state);
+        console.log(outcome.line);
+        const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+        const budgetLine = formatBudgetOutcomeLine(state);
+        if (budgetLine) console.log(budgetLine);
+        process.exitCode = outcome.exitCode;
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
         process.exitCode = 1;
-        return;
       }
-      throw err;
-    } finally {
-      process.removeListener("SIGINT", onSigint);
-    }
-    process.once("SIGINT", onSigint);
-    try {
-      const state = await runCommand(
-        process.cwd(),
-        opts.pipeline,
-        {},
-        { requirement: opts.requirement, requirementFile: opts.requirementFile },
-        controller.signal,
-        runId
-      );
-      const outcome = summarizePipelineOutcome(state);
-      console.log(outcome.line);
-      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
-      const budgetLine = formatBudgetOutcomeLine(state);
-      if (budgetLine) console.log(budgetLine);
-      process.exitCode = outcome.exitCode;
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exitCode = 1;
-    } finally {
-      lock.release();
-      process.removeListener("SIGINT", onSigint);
-    }
+    });
+    if (done === undefined) return; // aborted while waiting for lock
   });
 
 program
@@ -121,25 +135,9 @@ program
   })
   .action(async (opts: { runId?: string; pipeline?: string; force: boolean; raiseBudget?: number }) => {
     const { runResume } = await import("./commands/resume");
-    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
-    const controller = new AbortController();
-    const onSigint = () => controller.abort();
-    let lock: RunLock;
-    process.once("SIGINT", onSigint);
-    try {
-      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-resume", {
-        signal: controller.signal,
-        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
-        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
-      });
-    } catch (err) {
-      if (err instanceof LockWaitAbortedError) {
-        process.exitCode = 1;
-        return;
-      }
-      throw err;
-    }
-    try {
+    const { summarizePipelineOutcome } = await import("./engine/engine");
+    const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-resume", async (lock, controller) => {
       const result = await runResume(
         process.cwd(),
         { runId: opts.runId, pipeline: opts.pipeline, force: opts.force, raiseBudget: opts.raiseBudget },
@@ -151,17 +149,13 @@ program
         process.exitCode = 1;
         return;
       }
-      const { summarizePipelineOutcome } = await import("./engine/engine");
       const outcome = summarizePipelineOutcome(result.state!);
       console.log(`Run ${result.runId}: ${outcome.line}`);
-      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
       const budgetLine = formatBudgetOutcomeLine(result.state!);
       if (budgetLine) console.log(budgetLine);
       process.exitCode = outcome.exitCode;
-    } finally {
-      lock.release();
-      process.removeListener("SIGINT", onSigint);
-    }
+    });
+    if (done === undefined) return; // aborted while waiting for lock
   });
 
 program
@@ -171,42 +165,22 @@ program
   .option("--stage <id>", "target a specific stage (defaults to the sole waiting stage)")
   .action(async (opts: { runId?: string; stage?: string }) => {
     const { runApprove } = await import("./commands/approve");
-    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
-    const controller = new AbortController();
-    const onSigint = () => controller.abort();
-    let lock: RunLock;
-    process.once("SIGINT", onSigint);
-    try {
-      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-approve", {
-        signal: controller.signal,
-        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
-        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
-      });
-    } catch (err) {
-      if (err instanceof LockWaitAbortedError) {
-        process.exitCode = 1;
-        return;
-      }
-      throw err;
-    }
-    try {
+    const { summarizePipelineOutcome } = await import("./engine/engine");
+    const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
+    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-approve", async (lock, controller) => {
       const result = await runApprove(process.cwd(), opts, undefined, controller.signal);
       if (result.status !== "resumed") {
         console.error(result.message ?? result.status);
         process.exitCode = 1;
         return;
       }
-      const { summarizePipelineOutcome } = await import("./engine/engine");
       const outcome = summarizePipelineOutcome(result.state!);
       console.log(`Run ${result.runId}: ${outcome.line}`);
-      const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
       const budgetLine = formatBudgetOutcomeLine(result.state!);
       if (budgetLine) console.log(budgetLine);
       process.exitCode = outcome.exitCode;
-    } finally {
-      lock.release();
-      process.removeListener("SIGINT", onSigint);
-    }
+    });
+    if (done === undefined) return; // aborted while waiting for lock
   });
 
 program
@@ -217,21 +191,7 @@ program
   .option("--reason <text>", "reason recorded in events.jsonl")
   .action(async (opts: { runId?: string; stage?: string; reason?: string }) => {
     const { runReject } = await import("./commands/reject");
-    const { acquireRunLock, LockWaitAbortedError } = await import("./lock");
-    let lock: RunLock;
-    try {
-      lock = await acquireRunLock(process.cwd(), opts.runId ?? "pending-reject", {
-        onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
-        onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
-      });
-    } catch (err) {
-      if (err instanceof LockWaitAbortedError) {
-        process.exitCode = 1;
-        return;
-      }
-      throw err;
-    }
-    try {
+    await withRunLock(process.cwd(), opts.runId ?? "pending-reject", () => {
       const result = runReject(process.cwd(), opts);
       if (result.status !== "rejected") {
         console.error(result.message ?? result.status);
@@ -241,9 +201,7 @@ program
       const rejectedStage = result.state!.stages.find((s) => s.status === "aborted");
       console.log(`Run ${result.runId}: stage ${rejectedStage?.id} rejected`);
       process.exitCode = 1;
-    } finally {
-      lock.release();
-    }
+    });
   });
 
 program
