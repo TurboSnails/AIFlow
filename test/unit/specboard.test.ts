@@ -71,7 +71,12 @@ test("writeSpecBoard then readSpecBoard round-trips the exact board", () => {
       open_questions: [{ id: "Q1", topic: "cache strategy", positions: { A: "local", B: "remote" } }],
       decisions: [{ id: "D1", topic: "cache strategy", resolution: "local", by: "ralph" }],
       review_matrix: {
-        story_1: { reviewer_a: "pass", reviewer_b: "fail", arbitrated: true, arbitrator: "human", final: "pass" },
+        story_1: {
+          verdicts: { reviewer_a: "pass", reviewer_b: "fail" },
+          arbitrated: true,
+          arbitrator: "human",
+          final: "pass",
+        },
       },
     };
     writeSpecBoard(runDir, board);
@@ -145,8 +150,7 @@ test("recordReviewMatrix stores entry by story id", () => {
   const runDir = makeRunDir();
   try {
     const entry: ReviewVerdictEntry = {
-      reviewer_a: "pass",
-      reviewer_b: "skipped",
+      verdicts: { reviewer_a: "pass", reviewer_b: "skipped" },
       arbitrated: false,
       final: "pass",
     };
@@ -164,7 +168,7 @@ test("all writes use atomic writer and leave no temp file behind", () => {
     registerArtifact(runDir, "spec", "spec.md");
     addOpenQuestions(runDir, [{ id: "Q1", topic: "a", positions: {} }]);
     resolveOpenQuestions(runDir, ["Q1"], "r", "human");
-    recordReviewMatrix(runDir, "story_1", { arbitrated: false, final: "pass" });
+    recordReviewMatrix(runDir, "story_1", { verdicts: {}, arbitrated: false, final: "pass" });
     expect(existsSync(join(runDir, "specboard.json"))).toBe(true);
     expect(existsSync(join(runDir, "specboard.json.tmp"))).toBe(false);
     expect(readdirSync(runDir)).toEqual(["specboard.json"]);

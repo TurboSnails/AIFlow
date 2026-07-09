@@ -14,7 +14,7 @@ export interface Decision {
 }
 
 export interface ReviewVerdictEntry {
-  [profile: string]: "pass" | "fail" | "skipped" | boolean | string | undefined;
+  verdicts: Record<string, "pass" | "fail" | "skipped">;
   arbitrated: boolean;
   arbitrator?: string;
   final: "pass" | "fail";
