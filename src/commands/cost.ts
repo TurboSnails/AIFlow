@@ -146,7 +146,7 @@ export function renderAllRunsCostTable(summary: AllRunsCostSummary, opts: { colo
   for (const r of summary.rows) {
     const mark = r.breakdownAvailable ? "" : " *";
     if (!r.breakdownAvailable) anyDegraded = true;
-    lines.push(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${commas(r.totalInTok).padStart(12)}  ${commas(r.totalOutTok).padStart(12)}  ${(usd(r.totalCostUsd) + mark).padStart(10)}`);
+    lines.push(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${commas(r.totalInTok).padStart(12)}  ${commas(r.totalOutTok).padStart(12)}  ${usd(r.totalCostUsd).padStart(10)}${mark}`);
   }
   lines.push(`  ${"-".repeat(runW + pipeW + 40)}`);
   lines.push(`  ${"Grand total".padEnd(runW)}  ${"".padEnd(pipeW)}  ${commas(summary.grandTotalInTok).padStart(12)}  ${commas(summary.grandTotalOutTok).padStart(12)}  ${usd(summary.grandTotalCostUsd).padStart(10)}`);

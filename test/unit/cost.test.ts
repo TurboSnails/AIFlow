@@ -150,6 +150,22 @@ test("renderAllRunsCostCsv emits a header and one row per run with breakdown_ava
   expect(lines[2]).toBe("r1,p1,10,4,0.5,false");
 });
 
+test("renderAllRunsCostTable appends the degraded * after the padded cost so the column stays aligned", () => {
+  const s = summarizeAllRunsCost([
+    {
+      runId: "r2",
+      state: { ...stateWith(2, "p2"), cost: { input_tokens: 20, output_tokens: 8, est_usd: 2 } },
+      events: [] as AiflowEvent[],
+    },
+  ]);
+  const out = renderAllRunsCostTable(s, { color: false });
+  const rows = out.split("\n");
+  const dataRow = rows.find((l) => l.includes("r2"))!;
+  expect(dataRow).toContain("$2.0000 *");
+  // The "*" should be the very last character on the data row.
+  expect(dataRow.trimEnd().endsWith("*")).toBe(true);
+});
+
 test("renderAllRunsCostTable shows one row per run and a grand total", () => {
   const s = summarizeAllRunsCost([
     { runId: "r2", state: { ...stateWith(2, "p2"), cost: { input_tokens: 20, output_tokens: 8, est_usd: 2 } }, events: [stageCost("develop", 20, 8, 2)] },

@@ -100,11 +100,12 @@ export function runClean(cwd: string, opts: CleanOptions): number {
   const runW = Math.max(20, ...toDelete.map((r) => r.runId.length));
   const pipeW = Math.max(10, ...toDelete.map((r) => r.pipeline.length));
   const statusW = Math.max(8, ...toDelete.map((r) => r.status.length));
-  const header = `  ${"Run".padEnd(runW)}  ${"Pipeline".padEnd(pipeW)}  ${"Status".padEnd(statusW)}  ${"Cost".padStart(10)}  Age`;
+  const ageW = Math.max(6, ...toDelete.map((r) => formatRunAge(r.mtimeMs, now.getTime()).length));
+  const header = `  ${"Run".padEnd(runW)}  ${"Pipeline".padEnd(pipeW)}  ${"Status".padEnd(statusW)}  ${"Cost".padStart(10)}  ${"Age".padStart(ageW)}`;
   write(header + "\n");
   for (const r of toDelete) {
     const cost = `$${r.estUsd.toFixed(4)}`.padStart(10);
-    write(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${cost}  ${formatRunAge(r.mtimeMs, now.getTime())}\n`);
+    write(`  ${r.runId.padEnd(runW)}  ${r.pipeline.padEnd(pipeW)}  ${r.status.padEnd(statusW)}  ${cost}  ${formatRunAge(r.mtimeMs, now.getTime()).padStart(ageW)}\n`);
   }
 
   if (opts.dryRun) {

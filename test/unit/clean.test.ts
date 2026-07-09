@@ -101,6 +101,25 @@ test("runClean with no filters errors and deletes nothing", () => {
   }
 });
 
+test("runClean --dry-run aligns the Age column", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-age-"));
+  try {
+    const now = Date.now();
+    const dir = writeRun(cwd, "r1", { pipeline: "demo", stages: [{ id: "s1", status: "done" }], cost: { input_tokens: 0, output_tokens: 0, est_usd: 1.2345 } });
+    setMtime(dir, now);
+    let out = "";
+    const code = runClean(cwd, { status: "done", dryRun: true, write: (s) => { out += s; }, writeErr: () => {} });
+    expect(code).toBe(0);
+    const lines = out.split("\n");
+    const header = lines.find((l) => l.includes("Run") && l.includes("Age"))!;
+    const data = lines.find((l) => l.includes("r1"))!;
+    expect(header.trimEnd().endsWith("Age")).toBe(true);
+    expect(data.trimEnd().endsWith("0s")).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runClean --dry-run lists but does not delete", () => {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-"));
   try {
