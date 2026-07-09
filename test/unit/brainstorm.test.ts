@@ -159,7 +159,7 @@ test("stops after the first fan-out round if it alone exceeds the budget, withou
   const runDir = setupRunDir();
   try {
     const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
-    const callLlmFanOut = mock(async (profs: unknown[]) =>
+    const callLlmFanOut = mock(async (profs: ModelProfile[]) =>
       profs.map((p) => ({ profile: p, ok: true, result: { text: "idea", usage: { inTok: 1, outTok: 1, costUsd: 6 } } }))
     );
     const callLlm = mock(async () => ({ text: "synthesis", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));

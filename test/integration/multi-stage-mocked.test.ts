@@ -7,7 +7,7 @@ import { runCommand } from "../../src/commands/run";
 import { runApprove } from "../../src/commands/approve";
 import { runReject } from "../../src/commands/reject";
 import { runPlanStage } from "../../src/runners/plan";
-import type { PlanStageConfig } from "../../src/config/schema";
+import type { ModelProfile, PlanStageConfig } from "../../src/config/schema";
 import { runCost, summarizeRunCost } from "../../src/commands/cost";
 import { readRunSnapshot } from "../../src/commands/monitor";
 
@@ -60,7 +60,7 @@ const fakeCallLlm = async (opts: { prompt: string }) => ({
     : "a synthesized brainstorm result",
   usage: { inTok: 1, outTok: 1, costUsd: 0 },
 });
-const fakeCallLlmFanOut = async (profiles: unknown[]) =>
+const fakeCallLlmFanOut = async (profiles: ModelProfile[]) =>
   profiles.map((profile) => ({ profile, ok: true, result: { text: "an idea", usage: { inTok: 1, outTok: 1, costUsd: 0 } } }));
 const fakeRunAgentTaskWritingSpec = async (task: { cwd: string }) => {
   writeFileSync(join(task.cwd, "spec.md"), "# Spec\nAcceptance: implement US-1");

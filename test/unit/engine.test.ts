@@ -491,7 +491,7 @@ test("runPipelineOnce does not write a stage_cost event for a stage that reports
     const twoStage: PipelineConfig = {
       name: "gated",
       stages: [
-        { id: "confirm", type: "human_gate", prompt: "ok?" },
+        { id: "confirm", type: "human_gate", prompt: "ok?", on_timeout: "abort" },
         {
           id: "develop",
           type: "ralph_loop",

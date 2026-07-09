@@ -9,6 +9,7 @@ fixtures/sample-project/.git/
 
 # local tooling artifacts
 /.claude/
+/.idea/
 
 # human reference materials (not source) — delete these lines to commit them
 /AIFlow UI - standalone.html
