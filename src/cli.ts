@@ -285,7 +285,9 @@ program
   .option("--run-id <id>", "show a specific run (defaults to latest)")
   .option("--tail <n>", "show only the last N events", (v) => Number(v), 8)
   .option("--interval <ms>", "polling interval in ms", (v) => Number(v), 1000)
-  .action(async (opts: { runId?: string; tail: number; interval: number }) => {
+  .option("--stall-timeout <s>", "seconds since last event before a running stage is flagged stalled", (v) => Number(v), 300)
+  .option("--no-color", "disable ANSI colors")
+  .action(async (opts: { runId?: string; tail: number; interval: number; stallTimeout: number; color: boolean }) => {
     const { watchRun, readRunSnapshot } = await import("./commands/monitor");
     const controller = new AbortController();
     const onSigint = () => controller.abort();
@@ -294,6 +296,8 @@ program
       await watchRun(process.cwd(), {
         tail: opts.tail,
         intervalMs: opts.interval,
+        stallTimeoutS: opts.stallTimeout,
+        color: opts.color,
         signal: controller.signal,
         readSnapshot: opts.runId
           ? (cwd) => readRunSnapshot(cwd, opts.runId)

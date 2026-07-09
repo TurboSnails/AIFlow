@@ -211,12 +211,13 @@ export function renderSnapshot(snap: RunSnapshot, opts: MonitorOptions): string 
   return renderStatus(snap.state, snap.events, opts);
 }
 
-export async function watchRun(cwd: string, opts: { now?: () => Date; tail: number; write?: (s: string) => void; signal?: AbortSignal; intervalMs?: number; readSnapshot?: (cwd: string) => RunSnapshot | undefined; stallTimeoutS?: number }): Promise<void> {
+export async function watchRun(cwd: string, opts: { now?: () => Date; tail: number; write?: (s: string) => void; signal?: AbortSignal; intervalMs?: number; readSnapshot?: (cwd: string) => RunSnapshot | undefined; stallTimeoutS?: number; color?: boolean }): Promise<void> {
   const write = opts.write ?? ((s) => process.stdout.write(s));
   const nowFn = opts.now ?? (() => new Date());
   const intervalMs = opts.intervalMs ?? 1000;
   const snapshotFn = opts.readSnapshot ?? readRunSnapshot;
   const stallTimeoutS = opts.stallTimeoutS ?? 300;
+  const color = opts.color !== false;
 
   function hideCursor(on: boolean) {
     write(on ? "\x1b[?25l" : "\x1b[?25h");
@@ -234,7 +235,7 @@ export async function watchRun(cwd: string, opts: { now?: () => Date; tail: numb
       } else {
         const now = nowFn();
         const stall = detectStall(snap.state, snap.events, now, stallTimeoutS, snap.startedAt);
-        write(renderSnapshot(snap, { tail: opts.tail, now, color: true, stall }) + "\n");
+        write(renderSnapshot(snap, { tail: opts.tail, now, color, stall }) + "\n");
 
         const anyStalled = Object.values(stall).some((s) => s.stalled);
         if (anyStalled && !previousStalled) {

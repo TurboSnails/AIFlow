@@ -307,4 +307,64 @@ describe("watchRun + runStatus", () => {
     expect(joined).toContain("20260705_192000_a1b2c3");
     expect(joined).toContain("ralph-only");
   });
+
+  test("watchRun honors color:false for rendered content", async () => {
+    const cwd = setupFixture(SAMPLE_STATE);
+    const writes: string[] = [];
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    const snap: RunSnapshot = {
+      runId: "run-watch",
+      runDir: join(cwd, ".aiflow", "runs", "run-watch"),
+      startedAt: new Date(),
+      state: SAMPLE_STATE,
+      events: [],
+    };
+    await watchRun(cwd, {
+      tail: 5,
+      write: (s) => writes.push(s),
+      signal: controller.signal,
+      intervalMs: 20,
+      readSnapshot: () => snap,
+      color: false,
+    });
+    rmSync(cwd, { recursive: true, force: true });
+    // Strip watch UI escape sequences (cursor hide/show and screen clear) before checking content colors.
+    const content = writes
+      .join("")
+      .replace(/\x1b\[\?25[hl]/g, "")
+      .replace(/\x1b\[2J\x1b\[H/g, "");
+    expect(content).not.toContain("\x1b[");
+    expect(content).toContain("ralph-only");
+  });
+
+  test("watchRun uses stallTimeoutS when detecting stalls", async () => {
+    const cwd = setupFixture(SAMPLE_STATE);
+    const writes: string[] = [];
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    const state: EngineState = { ...SAMPLE_STATE, stages: [{ id: "develop", status: "running" }] };
+    const events: AiflowEvent[] = [
+      { ts: "2026-07-05T19:19:00.000Z", type: "story_result", story: "US-1", result: "pass" },
+    ];
+    const snap: RunSnapshot = {
+      runId: "run-watch",
+      runDir: join(cwd, ".aiflow", "runs", "run-watch"),
+      startedAt: new Date("2026-07-05T19:21:00.000Z"),
+      state,
+      events,
+    };
+    await watchRun(cwd, {
+      tail: 1,
+      write: (s) => writes.push(s),
+      signal: controller.signal,
+      intervalMs: 20,
+      readSnapshot: () => snap,
+      stallTimeoutS: 60,
+      now: () => new Date("2026-07-05T19:21:00.000Z"),
+      color: false,
+    });
+    rmSync(cwd, { recursive: true, force: true });
+    expect(writes.join("")).toContain("stalled 120s");
+  });
 });

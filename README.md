@@ -65,7 +65,7 @@ bun run ../../src/cli.ts clean --status done --before 7d --yes
 | `aiflow runs` | List all historical runs: id, pipeline, status, cost, age (`--json`, `--csv`, `--no-color`) |
 | `aiflow clean` | Delete terminal run directories; active and non-terminal runs are never deleted (`--before`, `--status`, `--keep`, `--dry-run`, `--yes`) |
 
-`aiflow status` and `aiflow watch` accept `--run-id <id>`, `--tail <n>`, and (for `status`) `--stall-timeout <s>` and `--no-color`.
+`aiflow status` and `aiflow watch` accept `--run-id <id>`, `--tail <n>`, `--stall-timeout <s>`, and `--no-color`. `watch` also accepts `--interval <ms>`.
 
 `aiflow runs` is read-only and never acquires the run lock; it lists runs newest-first and marks the active (running or lock-held) run with `*`. `aiflow clean` is destructive and requires at least one filter: `--before "<N>d"` or an ISO date, `--status done|failed|aborted`, or `--keep <n>`. It hard-excludes active runs and any run whose status is not terminal (`done`/`failed`/`aborted`); use `--dry-run` to preview and `--yes` to skip the confirmation prompt. In non-TTY contexts `aiflow clean` refuses to delete without `--yes`.
 
