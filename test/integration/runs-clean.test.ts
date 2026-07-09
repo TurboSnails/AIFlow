@@ -1,12 +1,12 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runRuns } from "../../src/commands/runs";
 import { runClean } from "../../src/commands/clean";
 import type { EngineState } from "../../src/engine/state";
 
-function writeRun(cwd: string, runId: string, stages: EngineState["stages"]): void {
+function writeRun(cwd: string, runId: string, stages: EngineState["stages"]): string {
   const dir = join(cwd, ".aiflow", "runs", runId);
   mkdirSync(dir, { recursive: true });
   const state: EngineState = {
@@ -14,6 +14,12 @@ function writeRun(cwd: string, runId: string, stages: EngineState["stages"]): vo
     cost: { input_tokens: 0, output_tokens: 0, est_usd: 0.1 },
   };
   writeFileSync(join(dir, "state.json"), JSON.stringify(state));
+  return dir;
+}
+
+function setMtime(dir: string, daysAgo: number): void {
+  const t = new Date(Date.now() - daysAgo * 86400_000);
+  utimesSync(dir, t, t);
 }
 
 test("runs lists all runs and marks the lock-held one active; clean --status done removes only done runs", () => {
@@ -47,6 +53,28 @@ test("runs lists all runs and marks the lock-held one active; clean --status don
     expect(existsSync(join(cwd, ".aiflow", "runs", "failed1"))).toBe(true);
     expect(existsSync(join(cwd, ".aiflow", "runs", "paused1"))).toBe(true);
     expect(existsSync(join(cwd, ".aiflow", "runs", "suspended1"))).toBe(true);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("clean --before + --keep keeps the newest N runs among those older than the cutoff", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-runs-clean-keep-"));
+  try {
+    const old1 = writeRun(cwd, "old1", [{ id: "s1", status: "done" }]);
+    const old2 = writeRun(cwd, "old2", [{ id: "s1", status: "done" }]);
+    const recent = writeRun(cwd, "recent", [{ id: "s1", status: "done" }]);
+    setMtime(old1, 10);
+    setMtime(old2, 8);
+    setMtime(recent, 1);
+
+    // --before 7d --keep 1: candidates are old1 and old2; keep old2 (newest), delete old1.
+    // "recent" is not older than 7d, so it survives regardless of --keep.
+    const code = runClean(cwd, { before: "7d", keep: 1, yes: true, write: () => {}, writeErr: () => {} });
+    expect(code).toBe(0);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "old1"))).toBe(false);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "old2"))).toBe(true);
+    expect(existsSync(join(cwd, ".aiflow", "runs", "recent"))).toBe(true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

@@ -44,6 +44,10 @@ cd fixtures/sample-project
 # see "Configuration" below
 MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts run --pipeline ralph-only --once
 MINIMAX_API_KEY=sk-cp-... bun run ../../src/cli.ts status
+
+# Preview then delete terminal runs older than 7 days
+bun run ../../src/cli.ts clean --status done --before 7d --dry-run
+bun run ../../src/cli.ts clean --status done --before 7d --yes
 ```
 
 ### Commands
