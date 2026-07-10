@@ -221,3 +221,77 @@ test("run without --requirement fails before creating any run directory", async 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+const WORKTREE_PIPELINE = `name: worktree-dev
+isolation: worktree
+autonomy: full
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 3
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`;
+
+test("run creates worktree when isolation=worktree", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiflow-worktree-integration-"));
+  try {
+    mkdirSync(join(dir, ".aiflow", "config", "pipelines"), { recursive: true });
+    writeFileSync(
+      join(dir, ".aiflow", "config", "models.yaml"),
+      "profiles:\n  main-dev:\n    channel: opencode\n    provider: x\n    model: y\n  reviewer:\n    channel: http\n    provider: y\n    model: z\n"
+    );
+    writeFileSync(join(dir, ".aiflow", "config", "pipelines", "worktree.yaml"), WORKTREE_PIPELINE);
+    writeFileSync(
+      join(dir, "prd.json"),
+      JSON.stringify({ branchName: "x", stories: [{ id: "US-1", title: "t", acceptance: [], priority: 1, passes: false, fixCount: 0 }] })
+    );
+    await $`git -C ${dir} init -q`;
+    await $`git -C ${dir} config user.email "test@example.com"`;
+    await $`git -C ${dir} config user.name "Test"`;
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "initial"`;
+
+    const worktreePath = join(dir, "aiflow-wt");
+    await $`git -C ${dir} worktree add ${worktreePath} -b aiflow/test`.quiet();
+
+    const createCalls: Array<{ cwd: string; runId: string }> = [];
+    const removeCalls: Array<{ worktreePath: string }> = [];
+    let agentCwd = "";
+    const fakeAgent = async (task: { cwd: string }) => {
+      agentCwd = task.cwd;
+      writeFileSync(join(task.cwd, "impl.txt"), "done");
+      return { ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } };
+    };
+    const fakeCreate = async (cwd: string, runId: string) => {
+      createCalls.push({ cwd, runId });
+      return { originalCwd: cwd, worktreePath, branch: `aiflow/${runId}` };
+    };
+    const fakeRemove = async (ctx: { worktreePath: string }) => {
+      removeCalls.push({ worktreePath: ctx.worktreePath });
+    };
+
+    const runId = "20260101_120000_test";
+    const state = await runCommand(
+      dir,
+      "worktree",
+      { runAgentTask: fakeAgent, createWorktree: fakeCreate, removeWorktree: fakeRemove },
+      {},
+      undefined,
+      runId
+    );
+
+    expect(createCalls).toEqual([{ cwd: dir, runId }]);
+    expect(agentCwd).toBe(worktreePath);
+    expect(state.stages[0].status).toBe("done");
+    expect(removeCalls).toEqual([{ worktreePath }]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+

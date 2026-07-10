@@ -20,6 +20,11 @@ import {
 } from "../llm/client";
 import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
 import { assertCleanIfAutoClean } from "./dirty-guard";
+import {
+  createWorktree as realCreateWorktree,
+  removeWorktree as realRemoveWorktree,
+  type WorktreeContext,
+} from "../worktree/manager";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -34,6 +39,8 @@ export interface RunCommandOverrides {
   callReviewer?: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
   callLlm?: typeof realCallLlm;
   callLlmFanOut?: typeof realCallLlmFanOut;
+  createWorktree?: (cwd: string, runId: string) => Promise<WorktreeContext>;
+  removeWorktree?: (ctx: WorktreeContext) => Promise<void>;
 }
 
 export interface RequirementInput {
@@ -67,6 +74,15 @@ export async function runCommand(
   const effectiveRunId = runId ?? createRunId();
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
   mkdirSync(runDir, { recursive: true });
+
+  const isolation = pipelineConfig.isolation ?? "none";
+  let worktreeCtx: WorktreeContext | undefined;
+  let runCwd = cwd;
+  if (isolation === "worktree") {
+    const createWorktree = overrides.createWorktree ?? realCreateWorktree;
+    worktreeCtx = await createWorktree(cwd, effectiveRunId);
+    runCwd = worktreeCtx.worktreePath;
+  }
 
   if (requirementText) {
     const artifactsDir = join(runDir, "artifacts");
@@ -119,5 +135,12 @@ export async function runCommand(
     },
   };
 
-  return runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, engineDeps, signal, { requirement: requirementText });
+  try {
+    return await runPipelineOnce(pipelineConfig, modelsConfig.profiles, runCwd, runDir, engineDeps, signal, { requirement: requirementText });
+  } finally {
+    if (worktreeCtx) {
+      const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+      await removeWorktree(worktreeCtx);
+    }
+  }
 }
