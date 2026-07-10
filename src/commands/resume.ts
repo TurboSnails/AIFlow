@@ -1,10 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listRunIdsByMtimeDesc } from "../runs/store";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import type { ModelProfile } from "../config/schema";
 import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/engine";
 import type { EngineState } from "../engine/state";
+import { writeStateAtomic } from "../engine/state";
 import { assertCleanIfAutoClean } from "./dirty-guard";
 
 export interface ResumeResult {
@@ -44,7 +45,7 @@ export async function runResume(
       throw new Error(`Invalid --raise-budget value: ${opts.raiseBudget}. Must be a positive number.`);
     }
     persisted.budget = { limit_usd: opts.raiseBudget };
-    writeFileSync(statePath, JSON.stringify(persisted, null, 2));
+    writeStateAtomic(runDir, persisted);
   }
 
   const profiles: Record<string, ModelProfile> = modelsConfig.profiles;
