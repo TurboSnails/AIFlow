@@ -6,6 +6,8 @@ import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { BrainstormStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
+import { runDebate } from "../debate/orchestrator";
+import { registerArtifact, addOpenQuestions, addDecisions } from "../specboard/specboard";
 
 type FanOutResult = { profile: ModelProfile; ok: boolean; result?: LlmCallResult; error?: string };
 
@@ -45,17 +47,6 @@ function renderIdeaPrompt(requirement: string): string {
   ].join("\n");
 }
 
-function renderDebatePrompt(requirement: string, others: string[]): string {
-  return [
-    renderIdeaPrompt(requirement),
-    "",
-    "## Other proposals from this round (anonymized)",
-    ...others.map((text, i) => `### Model ${i + 1}\n${text}`),
-    "",
-    "Critique the other proposals and revise your own proposal in response.",
-  ].join("\n");
-}
-
 function renderSynthesisPrompt(requirement: string, finalRound: FanOutResult[]): string {
   const proposals = finalRound
     .filter((r) => r.ok && r.result)
@@ -88,6 +79,61 @@ export async function runBrainstormStage(
   const requirementPath = join(artifactsDir, "requirement.md");
   const requirement = existsSync(requirementPath) ? readFileSync(requirementPath, "utf-8") : "";
 
+  if (stageConfig.mode === "debate") {
+    const debate = await runDebate(stageConfig, requirement, profiles, deps, budget);
+
+    if (debate.overBudget) {
+      return { result: "paused", reason: "budget_exceeded", usage: debate.usage };
+    }
+
+    if (debate.successes < 2) {
+      appendEvent(runDir, {
+        ts: new Date().toISOString(),
+        type: "brainstorm_result",
+        stage: stageConfig.id,
+        result: "fail",
+        successes: debate.successes,
+      });
+      return { result: "fail", usage: debate.usage };
+    }
+
+    writeFileSync(join(artifactsDir, stageConfig.output), debate.report);
+    registerArtifact(runDir, "brainstorm-report", join("artifacts", stageConfig.output));
+    if (debate.openQuestions.length > 0) {
+      addOpenQuestions(runDir, debate.openQuestions);
+    }
+    if (debate.decisions.length > 0) {
+      addDecisions(runDir, debate.decisions);
+    }
+
+    for (const summary of debate.roundSummaries) {
+      appendEvent(runDir, {
+        ts: new Date().toISOString(),
+        type: "debate_round",
+        stage: stageConfig.id,
+        round: summary.round,
+        resolved: summary.resolved,
+        remaining: summary.remaining,
+      });
+    }
+    appendEvent(runDir, {
+      ts: new Date().toISOString(),
+      type: "debate_end",
+      stage: stageConfig.id,
+      reason: debate.reason,
+      open_questions: debate.openQuestions.length,
+    });
+    appendEvent(runDir, {
+      ts: new Date().toISOString(),
+      type: "brainstorm_result",
+      stage: stageConfig.id,
+      result: "pass",
+      successes: debate.successes,
+    });
+
+    return { result: "pass", usage: debate.usage };
+  }
+
   const modelProfiles = stageConfig.models.map((name) => profiles[name]);
 
   const round1 = await deps.callLlmFanOut(modelProfiles, () => renderIdeaPrompt(requirement));
@@ -106,18 +152,6 @@ export async function runBrainstormStage(
   const rounds: FanOutResult[][] = [round1];
   let finalRound = round1;
   let overBudget = budget.record(sumUsage([round1]).costUsd);
-
-  if (stageConfig.mode === "debate") {
-    for (let round = 2; round <= stageConfig.debate_rounds && !overBudget; round++) {
-      const previous = finalRound;
-      finalRound = await deps.callLlmFanOut(modelProfiles, (profile) => {
-        const others = previous.filter((r) => r.profile !== profile && r.ok && r.result).map((r) => r.result!.text);
-        return renderDebatePrompt(requirement, others);
-      });
-      rounds.push(finalRound);
-      overBudget = budget.record(sumUsage([finalRound]).costUsd);
-    }
-  }
 
   if (overBudget) {
     return { result: "paused", reason: "budget_exceeded", usage: sumUsage(rounds) };

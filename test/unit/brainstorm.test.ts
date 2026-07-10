@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBrainstormStage } from "../../src/runners/brainstorm";
 import { createBudgetTracker } from "../../src/gate/budget";
+import { readSpecBoard } from "../../src/specboard/specboard";
+import { readEvents } from "../../src/events/events";
 import type { BrainstormStageConfig, ModelProfile } from "../../src/config/schema";
 import type { StageState } from "../../src/engine/state";
 
@@ -80,15 +82,21 @@ test("independent mode: fewer than 2 successes fails without calling the synthes
   }
 });
 
-test("debate mode: runs debate_rounds total fan-out calls before synthesizing", async () => {
+test("debate mode: writes report, registers artifact, and records decisions/open questions", async () => {
   const runDir = setupRunDir();
-  const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
+  const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2, output: "debate-report.md" };
   try {
     const callLlmFanOut = mock(async () => [
-      { profile: profiles.a, ok: true, result: { text: "round text A", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-      { profile: profiles.b, ok: true, result: { text: "round text B", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
+      { profile: profiles.a, ok: true, result: { text: "proposal A", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
+      { profile: profiles.b, ok: true, result: { text: "proposal B", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
     ]);
-    const callLlm = mock(async () => ({ text: "final synthesis", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const callLlm = mock(async () => ({
+      text: JSON.stringify({
+        resolved: [{ id: "D1", topic: "cache strategy", resolution: "use service worker" }],
+        remaining_disputes: [{ id: "Q1", topic: "sync frequency", positions: { a: "hourly", b: "daily" } }],
+      }),
+      usage: { inTok: 1, outTok: 1, costUsd: 0 },
+    }));
 
     const outcome = await runBrainstormStage(debateStage, pendingStageState, profiles, "/tmp/x", runDir, () => new Date(), undefined, {
       callLlm,
@@ -96,66 +104,30 @@ test("debate mode: runs debate_rounds total fan-out calls before synthesizing", 
     });
 
     expect(outcome.result).toBe("pass");
-    expect(callLlmFanOut).toHaveBeenCalledTimes(2); // round 1 (idea) + round 2 (debate); debate_rounds=2 means one extra round
-    expect(callLlm).toHaveBeenCalledTimes(1); // synthesizer only
+
+    const reportPath = join(runDir, "artifacts", "debate-report.md");
+    expect(existsSync(reportPath)).toBe(true);
+    const report = readFileSync(reportPath, "utf-8");
+    expect(report).toContain("D1");
+    expect(report).toContain("Q1");
+
+    const board = readSpecBoard(runDir);
+    expect(board.artifacts["brainstorm-report"]).toBe("artifacts/debate-report.md");
+    expect(board.decisions).toHaveLength(1);
+    expect(board.decisions[0]).toMatchObject({ id: "D1", topic: "cache strategy", resolution: "use service worker" });
+    expect(board.open_questions).toHaveLength(1);
+    expect(board.open_questions[0]).toMatchObject({ id: "Q1", topic: "sync frequency", positions: { a: "hourly", b: "daily" } });
+
+    const events = readEvents(runDir);
+    expect(events.some((e) => e.type === "debate_round")).toBe(true);
+    expect(events.some((e) => e.type === "debate_end" && e.reason === "stalled")).toBe(true);
+    expect(events.some((e) => e.type === "brainstorm_result" && e.result === "pass")).toBe(true);
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
 });
 
-test("debate mode: round 2 prompt for a model excludes its own round-1 text but includes peers'", async () => {
-  const runDir = setupRunDir();
-  const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
-  try {
-    const round1Result = [
-      { profile: profiles.a, ok: true, result: { text: "ROUND1_TEXT_FROM_A", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-      { profile: profiles.b, ok: true, result: { text: "ROUND1_TEXT_FROM_B", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-    ];
-    const round2Prompts: Record<string, string> = {};
-
-    let callCount = 0;
-    // Unlike the mock above, this mock actually invokes promptFn(profile) for each profile,
-    // just like the real callLlmFanOut does, so the self-exclusion filter inside
-    // runBrainstormStage's debate-round callback actually executes and can be observed.
-    const callLlmFanOut = mock(async (fanProfiles: ModelProfile[], promptFn: (profile: ModelProfile) => string) => {
-      callCount++;
-      if (callCount === 1) {
-        for (const p of fanProfiles) promptFn(p);
-        return round1Result;
-      }
-      for (const p of fanProfiles) {
-        const prompt = promptFn(p);
-        const key = p === profiles.a ? "a" : "b";
-        round2Prompts[key] = prompt;
-      }
-      return [
-        { profile: profiles.a, ok: true, result: { text: "ROUND2_TEXT_FROM_A", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-        { profile: profiles.b, ok: true, result: { text: "ROUND2_TEXT_FROM_B", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-      ];
-    });
-    const callLlm = mock(async () => ({ text: "final synthesis", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
-
-    const outcome = await runBrainstormStage(debateStage, pendingStageState, profiles, "/tmp/x", runDir, () => new Date(), undefined, {
-      callLlm,
-      callLlmFanOut,
-    });
-
-    expect(outcome.result).toBe("pass");
-    expect(round2Prompts.a).toBeDefined();
-    expect(round2Prompts.b).toBeDefined();
-    // Model A's own round-1 output must not appear in A's round-2 prompt.
-    expect(round2Prompts.a).not.toContain("ROUND1_TEXT_FROM_A");
-    // Model B's round-1 output (the peer) must appear in A's round-2 prompt.
-    expect(round2Prompts.a).toContain("ROUND1_TEXT_FROM_B");
-    // And symmetrically for B.
-    expect(round2Prompts.b).not.toContain("ROUND1_TEXT_FROM_B");
-    expect(round2Prompts.b).toContain("ROUND1_TEXT_FROM_A");
-  } finally {
-    rmSync(runDir, { recursive: true, force: true });
-  }
-});
-
-test("stops after the first fan-out round if it alone exceeds the budget, without starting a debate round", async () => {
+test("stops after the first fan-out round if it alone exceeds the budget, without calling the synthesizer", async () => {
   const runDir = setupRunDir();
   try {
     const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
@@ -180,7 +152,7 @@ test("stops after the first fan-out round if it alone exceeds the budget, withou
     expect(outcome.result).toBe("paused");
     expect(outcome.reason).toBe("budget_exceeded");
     expect(outcome.usage).toEqual({ inTok: 2, outTok: 2, costUsd: 12 });
-    expect(callLlm).not.toHaveBeenCalled(); // synthesizer call never happens
+    expect(callLlm).not.toHaveBeenCalled(); // moderator/synthesizer call never happens
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

@@ -41,6 +41,16 @@ export function addOpenQuestions(runDir: string, questions: OpenQuestion[]): voi
   writeSpecBoard(runDir, board);
 }
 
+export function addDecisions(runDir: string, decisions: Decision[]): void {
+  const board = readSpecBoard(runDir);
+  for (const d of decisions) {
+    if (!board.decisions.find((existing) => existing.id === d.id)) {
+      board.decisions.push(d);
+    }
+  }
+  writeSpecBoard(runDir, board);
+}
+
 export function resolveOpenQuestions(runDir: string, ids: string[], resolution: string, by: string): void {
   const board = readSpecBoard(runDir);
   for (const id of ids) {
