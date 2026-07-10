@@ -7,6 +7,7 @@ import { readState } from "../../src/engine/state";
 import type { PipelineConfig, ModelProfile } from "../../src/config/schema";
 import type { EngineState } from "../../src/engine/state";
 import { readEvents } from "../../src/events/events";
+import { writeSpecBoard } from "../../src/specboard/specboard";
 
 const pipeline: PipelineConfig = {
   name: "ralph-only",
@@ -747,4 +748,76 @@ describe("runPipelineOnce AutonomyPolicy integration", () => {
       rmSync(runDir, { recursive: true, force: true });
     }
   });
+});
+
+test("open questions on the SpecBoard pause the stage when on_unresolved is ask_human", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-unresolved-"));
+  try {
+    const specPipeline: PipelineConfig = {
+      name: "spec-unresolved",
+      autonomy: "full",
+      on_unresolved: "ask_human",
+      stages: [
+        {
+          id: "specify",
+          type: "spec",
+          model: "main-dev",
+        },
+      ],
+    };
+    const specRunner = mock(async () => {
+      writeSpecBoard(runDir, {
+        requirement: "Add offline cache",
+        artifacts: {},
+        open_questions: [{ id: "Q1", topic: "Storage backend", positions: {} }],
+        decisions: [],
+        review_matrix: {},
+      });
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    });
+    const state = await runPipelineOnce(specPipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { spec: specRunner },
+    });
+
+    expect(state.stages[0].status).toBe("waiting_human");
+    expect(state.stages[0].reason).toBe("autonomy_pause");
+    expect(specRunner).toHaveBeenCalledTimes(1);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("open questions on the SpecBoard do not pause when on_unresolved is main_dev_decides", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-unresolved-dev-"));
+  try {
+    const specPipeline: PipelineConfig = {
+      name: "spec-unresolved",
+      autonomy: "full",
+      on_unresolved: "main_dev_decides",
+      stages: [
+        {
+          id: "specify",
+          type: "spec",
+          model: "main-dev",
+        },
+      ],
+    };
+    const specRunner = mock(async () => {
+      writeSpecBoard(runDir, {
+        requirement: "Add offline cache",
+        artifacts: {},
+        open_questions: [{ id: "Q1", topic: "Storage backend", positions: {} }],
+        decisions: [],
+        review_matrix: {},
+      });
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    });
+    const state = await runPipelineOnce(specPipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { spec: specRunner },
+    });
+
+    expect(state.stages[0].status).toBe("done");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
 });

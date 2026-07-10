@@ -396,6 +396,14 @@ export async function runPipelineOnce(
         writeStateAtomic(runDir, state);
         break;
       }
+      if (shouldPause(effectiveAutonomy, "unresolved_questions", policyCtx) === "pause") {
+        state = {
+          ...state,
+          stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s)),
+        };
+        writeStateAtomic(runDir, state);
+        break;
+      }
     } else {
       // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
       break;
