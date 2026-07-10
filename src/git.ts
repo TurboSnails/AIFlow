@@ -14,6 +14,11 @@ export async function diffCached(cwd: string): Promise<string> {
   return out;
 }
 
+export async function diffCachedFileNames(cwd: string): Promise<string[]> {
+  const out = await $`git -C ${cwd} diff --cached --name-only`.text();
+  return out.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
 export async function commit(cwd: string, message: string): Promise<void> {
   await $`git -C ${cwd} commit -q -m ${message}`.quiet();
 }

@@ -7,10 +7,11 @@ import { runReviewGate as realRunReviewGate, type ReviewGateOutcome, type Review
 import { runChecks as realRunChecks } from "../gate/check-runner";
 import { callReviewer as realCallReviewer } from "../llm/client";
 import { hashConfigDir as realHashConfigDir, hashSpecFile as realHashSpecFile } from "../config/config-hash";
-import { readSpecBoard as realReadSpecBoard } from "../specboard/specboard";
+import { readSpecBoard as realReadSpecBoard, recordReviewMatrix } from "../specboard/specboard";
 import type { SpecBoard } from "../specboard/types";
-import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
+import { revParseHead, stageAll, diffCached, diffCachedFileNames, commit, checkoutClean, checkoutConfigOnly } from "../git";
 import { appendEvent, type GateResultAiflowEvent } from "../events/events";
+import type { ReviewVerdictAiflowEvent, ReviewArbitratedAiflowEvent, StorySuspendedAiflowEvent } from "../events/new-events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
 import type { RalphLoopStopReason } from "../engine/state";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
@@ -29,6 +30,7 @@ export interface RalphLoopDeps {
     revParseHead: typeof revParseHead;
     stageAll: typeof stageAll;
     diffCached: typeof diffCached;
+    diffCachedFileNames: typeof diffCachedFileNames;
     commit: typeof commit;
     checkoutClean: typeof checkoutClean;
     checkoutConfigOnly: typeof checkoutConfigOnly;
@@ -36,6 +38,8 @@ export interface RalphLoopDeps {
   hashConfigDir: (cwd: string) => string;
   readSpecBoard?: (runDir: string) => SpecBoard;
   hashSpecFile?: (specPath: string) => string | undefined;
+  maxDriftFiles?: number;
+  defaultChecks?: string[];
 }
 
 export interface RalphLoopResult {
@@ -48,10 +52,11 @@ const defaultDeps: RalphLoopDeps = {
   runAgentTask: realRunAgentTask,
   runReviewGate: (config, reviewerProfile, cwd, diff, acceptance, deps) =>
     realRunReviewGate(config, reviewerProfile, cwd, diff, acceptance, deps),
-  git: { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly },
+  git: { revParseHead, stageAll, diffCached, diffCachedFileNames, commit, checkoutClean, checkoutConfigOnly },
   hashConfigDir: realHashConfigDir,
   readSpecBoard: realReadSpecBoard,
   hashSpecFile: realHashSpecFile,
+  maxDriftFiles: 50,
 };
 
 export function renderPrompt(story: Story, specExcerpt: string, progressTail: string, fixListContent: string): string {
@@ -78,6 +83,25 @@ function readTail(path: string, maxChars: number): string {
   if (!existsSync(path)) return "";
   const content = readFileSync(path, "utf-8");
   return content.slice(-maxChars);
+}
+
+function emitStorySuspended(runDir: string, stageId: string, storyId: string, reason: StorySuspendedAiflowEvent["reason"]): void {
+  appendEvent(runDir, { ts: new Date().toISOString(), type: "story_suspended", story: storyId, reason });
+}
+
+function archiveReview(runDir: string, storyId: string, gateOutcome: ReviewGateOutcome): void {
+  const reviewsDir = join(runDir, "artifacts", "reviews");
+  mkdirSync(reviewsDir, { recursive: true });
+  const archive = {
+    storyId,
+    checks: gateOutcome.checks,
+    aiReview: gateOutcome.aiReview,
+    blockers: gateOutcome.blockers,
+    matrix: gateOutcome.matrix,
+    issueSets: gateOutcome.issueSets,
+    reviewOutput: gateOutcome.reviewOutput,
+  };
+  writeFileAtomic(join(reviewsDir, `${storyId}.json`), JSON.stringify(archive, null, 2));
 }
 
 export async function runRalphLoopOnce(
@@ -169,6 +193,9 @@ export async function runRalphLoopOnce(
         reason,
       });
       const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
+      if (suspended) {
+        emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+      }
       const result = suspended ? "suspended" : "fail";
       appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
       budget.record(agentResult.usage.costUsd); // 记账；本轮因篡改结束，不熔断
@@ -190,13 +217,51 @@ export async function runRalphLoopOnce(
   }
 
   await deps.git.stageAll(cwd);
+
+  const maxDrift = deps.maxDriftFiles ?? 50;
+  const changedFiles = await deps.git.diffCachedFileNames(cwd);
+  if (changedFiles.length > maxDrift) {
+    await deps.git.checkoutClean(cwd);
+    const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
+    writePrd(prdPath, updatedPrd);
+    const fixCount = updatedPrd.stories.find((s) => s.id === story.id)!.fixCount;
+    appendFileSync(
+      fixListPath,
+      `\n## ${story.id} (round ${fixCount})\nChanged files (${changedFiles.length}) exceed max_drift_files (${maxDrift}). Reverted and marked as failure.\n`
+    );
+    appendEvent(runDir, {
+      ts: new Date().toISOString(),
+      type: "gate_result",
+      stage: stageConfig.id,
+      story: story.id,
+      checks: "fail",
+      ai_review: "skipped",
+      blockers: 0,
+      reason: "max_drift_exceeded",
+    });
+    const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
+    if (suspended) {
+      emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+    }
+    const result = suspended ? "suspended" : "fail";
+    appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
+    budget.record(agentResult.usage.costUsd);
+    return { storyId: story.id, result, usage: agentResult.usage };
+  }
+
   const diff = await deps.git.diffCached(cwd);
 
-  const gateOutcome = await deps.runReviewGate(stageConfig.gate, reviewerProfile, cwd, diff, story.acceptance, {
+  const gateConfig: RalphLoopStageConfig["gate"] =
+    stageConfig.gate.checks.length === 0 && (deps.defaultChecks?.length ?? 0) > 0
+      ? { ...stageConfig.gate, checks: deps.defaultChecks! }
+      : stageConfig.gate;
+
+  const gateOutcome = await deps.runReviewGate(gateConfig, reviewerProfile, cwd, diff, story.acceptance, {
     runChecks: realRunChecks,
     callReviewer: realCallReviewer,
     reviewers: profiles,
     authorProfile: stageConfig.model,
+    stage: stageConfig.id,
   });
   const totalUsage = {
     inTok: agentResult.usage.inTok + (gateOutcome.usage?.inTok ?? 0),
@@ -206,6 +271,33 @@ export async function runRalphLoopOnce(
 
   if (gateOutcome.usage && budget.record(gateOutcome.usage.costUsd)) {
     return { storyId: story.id, result: "paused", usage: totalUsage };
+  }
+
+  archiveReview(runDir, story.id, gateOutcome);
+
+  if (gateOutcome.matrix) {
+    recordReviewMatrix(runDir, story.id, gateOutcome.matrix);
+    const verdictEvent: ReviewVerdictAiflowEvent = {
+      ts: new Date().toISOString(),
+      type: "review_verdict",
+      stage: stageConfig.id,
+      story: story.id,
+      reviewers: gateOutcome.matrix.verdicts,
+      arbitrated: gateOutcome.matrix.arbitrated,
+      final: gateOutcome.matrix.final,
+    };
+    appendEvent(runDir, verdictEvent);
+    if (gateOutcome.matrix.arbitrated) {
+      const arbitratedEvent: ReviewArbitratedAiflowEvent = {
+        ts: new Date().toISOString(),
+        type: "review_arbitrated",
+        stage: stageConfig.id,
+        story: story.id,
+        arbitrator: gateOutcome.matrix.arbitrator ?? reviewerProfile.model,
+        verdict: gateOutcome.matrix.final,
+      };
+      appendEvent(runDir, arbitratedEvent);
+    }
   }
 
   appendEvent(runDir, {
@@ -239,6 +331,9 @@ export async function runRalphLoopOnce(
   appendFileSync(fixListPath, `\n${failureNote}`);
 
   const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
+  if (suspended) {
+    emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+  }
   const result = suspended ? "suspended" : "fail";
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
   return { storyId: story.id, result, usage: totalUsage };
@@ -297,6 +392,25 @@ function finalizeOutcome(
   };
 }
 
+function suspendStoryById(
+  prdPath: string,
+  prd: Prd,
+  storyId: string,
+  reason: StorySuspendedAiflowEvent["reason"],
+  runDir: string,
+  stageId: string
+): Prd {
+  const story = prd.stories.find((s) => s.id === storyId);
+  if (!story || story.suspended) return prd;
+  const updated = {
+    ...prd,
+    stories: prd.stories.map((s) => (s.id === storyId ? { ...s, suspended: true } : s)),
+  };
+  writePrd(prdPath, updated);
+  emitStorySuspended(runDir, stageId, storyId, reason);
+  return updated;
+}
+
 /**
  * Repeatedly runs runRalphLoopOnce until every story is done/suspended,
  * max_iterations is reached, or stall_limit consecutive iterations make
@@ -346,8 +460,8 @@ export async function runRalphLoop(
       return outcome;
     }
 
-    const prdAfter = readPrd(prdPath);
-    const suspendedAfter = countStories(prdAfter).suspended;
+    let prdAfter = readPrd(prdPath);
+    let suspendedAfter = countStories(prdAfter).suspended;
 
     if (suspendedAfter > suspendedBefore && stageConfig.auto_clean) {
       await deps.git.checkoutClean(cwd);
@@ -362,7 +476,9 @@ export async function runRalphLoop(
     }
 
     if (iterations >= stageConfig.max_iterations) {
-      const outcome: RalphLoopSummary = { result: "suspended", reason: "max_iterations", iterations, usage };
+      prdAfter = suspendStoryById(prdPath, prdAfter, onceResult.storyId, "max_iterations", runDir, stageConfig.id);
+      suspendedAfter = countStories(prdAfter).suspended;
+      const outcome: RalphLoopSummary = { result: suspendedAfter > 0 ? "suspended" : "pass", reason: "max_iterations", iterations, usage };
       emitLoopResult(runDir, stageConfig.id, prdAfter, outcome);
       return outcome;
     }
@@ -371,7 +487,9 @@ export async function runRalphLoop(
     stallCount = progressed ? 0 : stallCount + 1;
 
     if (stallCount >= stageConfig.stall_limit) {
-      const outcome: RalphLoopSummary = { result: "suspended", reason: "stall", iterations, usage };
+      prdAfter = suspendStoryById(prdPath, prdAfter, onceResult.storyId, "stall", runDir, stageConfig.id);
+      suspendedAfter = countStories(prdAfter).suspended;
+      const outcome: RalphLoopSummary = { result: suspendedAfter > 0 ? "suspended" : "pass", reason: "stall", iterations, usage };
       emitLoopResult(runDir, stageConfig.id, prdAfter, outcome);
       return outcome;
     }
