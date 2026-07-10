@@ -4,6 +4,8 @@ import { listRunIdsByMtimeDesc } from "../runs/store";
 import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
 import { runPipelineOnce, type EngineDeps } from "../engine/engine";
 import { writeStateAtomic, type EngineState } from "../engine/state";
+import { appendEvent } from "../events/events";
+import { writeGateAnswer } from "../gate-answer/answer";
 import { assertCleanIfAutoClean } from "./dirty-guard";
 
 export interface ApproveResult {
@@ -52,7 +54,31 @@ export async function runApprove(
 
   await assertCleanIfAutoClean(cwd, pipelineConfig, state.pipeline, isCleanFn);
 
-  state.stages[targetIndex] = { id: state.stages[targetIndex].id, status: "done" };
+  const stageId = state.stages[targetIndex].id;
+  const stageConfig = pipelineConfig.stages.find((s) => s.id === stageId);
+  if (!stageConfig || stageConfig.type !== "human_gate") {
+    throw new Error(`Stage "${stageId}" is not a human_gate stage`);
+  }
+
+  const answeredAt = new Date().toISOString();
+  writeGateAnswer(runDir, {
+    stage: stageId,
+    prompt: stageConfig.prompt,
+    status: "answered",
+    answered_at: answeredAt,
+    action: "approve",
+    reason: null,
+  });
+  appendEvent(runDir, {
+    ts: answeredAt,
+    type: "gate_answered",
+    stage: stageId,
+    by: "cli",
+    action: "approve",
+  });
+
+  // Keep state.json untouched; the runner consumes gate-answer.json on resume
+  // and turns the waiting_human stage into done.
   writeStateAtomic(runDir, state);
 
   const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, signal, { resume: true });

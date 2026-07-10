@@ -1,8 +1,10 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runApprove } from "../../src/commands/approve";
+import { readGateAnswer } from "../../src/gate-answer/answer";
+import { readEvents } from "../../src/events/events";
 
 function setupRun(stages: Array<{ id: string; status: string; entered_at?: string }>): { cwd: string; runId: string } {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-approve-test-"));
@@ -126,9 +128,10 @@ test("resumed pipeline actually continues past the approved stage to the next ru
     expect(result.status).toBe("resumed");
     expect(result.state!.stages[0].status).toBe("done");
     expect(result.state!.stages[1].status).toBe("done");
-    // only "second" should have been invoked by the runner since "confirm" was
-    // already flipped to done by runApprove before runPipelineOnce started.
-    expect(calls).toEqual(["second"]);
+    // The resume loop revisits the waiting gate; the runner consumes the
+    // gate-answer.json written by runApprove and returns pass, then runs
+    // the downstream stage.
+    expect(calls).toEqual(["confirm", "second"]);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -145,6 +148,53 @@ test("runApprove stops with a paused downstream stage when given an already-abor
     const result = await runApprove(cwd, { runId }, { runners: {} }, controller.signal);
     expect(result.status).toBe("resumed");
     expect(result.state!.stages[1].status).toBe("paused");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("writes gate-answer.json and a gate_answered event before resuming", async () => {
+  const { cwd, runId } = setupRun([{ id: "confirm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]);
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  try {
+    const result = await runApprove(cwd, { runId }, {
+      runners: {
+        human_gate: async () => ({ result: "pass" }),
+      },
+    });
+    expect(result.status).toBe("resumed");
+
+    const answer = readGateAnswer(runDir);
+    expect(answer).not.toBeUndefined();
+    expect(answer!.stage).toBe("confirm");
+    expect(answer!.status).toBe("answered");
+    expect(answer!.action).toBe("approve");
+    expect(answer!.answered_at).toBeTruthy();
+
+    const events = readEvents(runDir);
+    const answeredEvent = events.find((e) => e.type === "gate_answered");
+    expect(answeredEvent).toBeDefined();
+    expect((answeredEvent as any).stage).toBe("confirm");
+    expect((answeredEvent as any).by).toBe("cli");
+    expect((answeredEvent as any).action).toBe("approve");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("--stage writes gate-answer.json only for the named stage", async () => {
+  const { cwd, runId } = setupRun([
+    { id: "confirm-a", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+    { id: "confirm-b", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+  ]);
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  try {
+    const result = await runApprove(cwd, { runId, stage: "confirm-a" });
+    expect(result.status).toBe("resumed");
+
+    const answer = readGateAnswer(runDir);
+    expect(answer!.stage).toBe("confirm-a");
+    expect(answer!.action).toBe("approve");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -186,6 +236,8 @@ test("approve rejects a dirty tree for an auto_clean pipeline without recording 
     // state.json 未被改动：confirm 仍是 waiting_human，approval 没落盘。
     const after = readFileSync(join(runDir, "state.json"), "utf-8");
     expect(after).toBe(stateJson);
+    // gate-answer.json 也不应被创建。
+    expect(existsSync(join(runDir, "gate-answer.json"))).toBe(false);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
