@@ -109,6 +109,44 @@ describe("renderRunReport", () => {
     });
     expect(out).toContain("2026-07-05T19:21:30.000Z");
   });
+  test("includes review distribution, debate summary, and gate blockers", () => {
+    const events: AiflowEvent[] = [
+      {
+        ts: "2026-07-05T19:20:00.000Z",
+        type: "review_verdict",
+        stage: "review",
+        story: "US-1",
+        reviewers: { alice: "pass", bob: "fail" },
+        arbitrated: true,
+        final: "fail",
+      },
+      {
+        ts: "2026-07-05T19:20:01.000Z",
+        type: "review_verdict",
+        stage: "review",
+        story: "US-2",
+        reviewers: { alice: "skipped", bob: "pass" },
+        arbitrated: false,
+        final: "pass",
+      },
+      { ts: "2026-07-05T19:20:02.000Z", type: "debate_round", stage: "plan", round: 1, resolved: 1, remaining: 2 },
+      { ts: "2026-07-05T19:20:03.000Z", type: "debate_end", stage: "plan", reason: "max_rounds", open_questions: 3 },
+      { ts: "2026-07-05T19:20:04.000Z", type: "gate_result", stage: "develop", story: "US-1", checks: "fail", ai_review: "pass", blockers: 2 },
+    ];
+    const out = renderRunReport(STATE, events, {
+      now: new Date("2026-07-05T19:21:30.000Z"),
+      startedAt: new Date("2026-07-05T19:20:00.000Z"),
+    });
+    expect(out).toContain("## Reviews");
+    expect(out).toContain("| alice | 1 | 0 | 1 |");
+    expect(out).toContain("| bob | 1 | 1 | 0 |");
+    expect(out).toContain("## Debates");
+    expect(out).toContain("- rounds: 1");
+    expect(out).toContain("- open questions: 3");
+    expect(out).toContain("## Gate Results");
+    expect(out).toContain("- total blockers: 2");
+    expect(out).toContain("develop/US-1 (2 blockers)");
+  });
 });
 
 function writeRun(cwd: string, runId: string, state: Partial<EngineState>): void {

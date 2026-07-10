@@ -35,10 +35,51 @@ function storiesByResult(events: AiflowEvent[]): Map<string, string[]> {
   return m;
 }
 
+function reviewDistribution(events: AiflowEvent[]): Map<string, { pass: number; fail: number; skipped: number }> {
+  const m = new Map<string, { pass: number; fail: number; skipped: number }>();
+  for (const e of events) {
+    if (e.type !== "review_verdict") continue;
+    for (const [reviewer, verdict] of Object.entries(e.reviewers)) {
+      const cur = m.get(reviewer) ?? { pass: 0, fail: 0, skipped: 0 };
+      if (verdict === "pass") cur.pass++;
+      else if (verdict === "fail") cur.fail++;
+      else if (verdict === "skipped") cur.skipped++;
+      m.set(reviewer, cur);
+    }
+  }
+  return m;
+}
+
+function debateSummary(events: AiflowEvent[]): { rounds: number; openQuestions: number } {
+  let rounds = 0;
+  let openQuestions = 0;
+  for (const e of events) {
+    if (e.type === "debate_round") rounds++;
+    if (e.type === "debate_end") openQuestions += e.open_questions ?? 0;
+  }
+  return { rounds, openQuestions };
+}
+
+function gateBlockers(events: AiflowEvent[]): { total: number; fails: Array<{ stage: string; story: string; blockers: number }> } {
+  let total = 0;
+  const fails: Array<{ stage: string; story: string; blockers: number }> = [];
+  for (const e of events) {
+    if (e.type !== "gate_result") continue;
+    total += e.blockers ?? 0;
+    if (e.checks === "fail" || e.ai_review === "fail") {
+      fails.push({ stage: e.stage, story: e.story, blockers: e.blockers ?? 0 });
+    }
+  }
+  return { total, fails };
+}
+
 export function renderRunReport(state: EngineState, events: AiflowEvent[], opts: RunReportOptions): string {
   const durationS = durationSeconds(opts.startedAt, opts.now);
   const counts = countByType(events);
   const byResult = storiesByResult(events);
+  const reviews = reviewDistribution(events);
+  const debate = debateSummary(events);
+  const gate = gateBlockers(events);
 
   const lines: string[] = [];
   lines.push(`# Run report — ${state.run_id}`);
@@ -86,6 +127,37 @@ export function renderRunReport(state: EngineState, events: AiflowEvent[], opts:
     lines.push("");
   }
   if (!any) lines.push("(none)\n");
+
+  lines.push("## Reviews");
+  lines.push("");
+  if (reviews.size === 0) {
+    lines.push("(none)");
+  } else {
+    lines.push("| reviewer | pass | fail | skipped |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const [reviewer, { pass, fail, skipped }] of reviews) {
+      lines.push(`| ${reviewer} | ${pass} | ${fail} | ${skipped} |`);
+    }
+  }
+  lines.push("");
+
+  lines.push("## Debates");
+  lines.push("");
+  lines.push(`- rounds: ${debate.rounds}`);
+  lines.push(`- open questions: ${debate.openQuestions}`);
+  lines.push("");
+
+  lines.push("## Gate Results");
+  lines.push("");
+  lines.push(`- total blockers: ${gate.total}`);
+  if (gate.fails.length > 0) {
+    lines.push("- failed gates:");
+    for (const f of gate.fails) {
+      lines.push(`  - ${f.stage}/${f.story} (${f.blockers} blockers)`);
+    }
+  }
+  lines.push("");
+
   return lines.join("\n");
 }
 
