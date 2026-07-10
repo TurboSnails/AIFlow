@@ -150,6 +150,6 @@ export const ProjectConfigSchema = z.object({
       port: z.number().int().positive().default(3000),
       host: z.string().default("127.0.0.1"),
     })
-    .optional(),
+    .default({}),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

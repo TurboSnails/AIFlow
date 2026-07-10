@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadModelsConfig, loadPipelineConfig } from "../../src/config/loader";
+import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../../src/config/loader";
 
 function withTempDir(fn: (dir: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-config-test-"));
@@ -392,4 +392,13 @@ stages:
   expect(cfg.autonomy).toBe("full");
   expect(cfg.budget?.max_retry_steps).toBe(5);
   expect(cfg.stages[0].gate.ai_review.reviewers).toEqual(["kimi", "ds"]);
+});
+
+test("loads project config defaults", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pcfg-"));
+  const path = join(dir, "project.yaml");
+  writeFileSync(path, "{}\n");
+  const cfg = loadProjectConfig(path);
+  expect(cfg.max_drift_files).toBe(50);
+  expect(cfg.dashboard?.port).toBe(3000);
 });
