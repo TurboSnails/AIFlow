@@ -15,3 +15,12 @@ export const ReviewOutputSchema = z.object({
 });
 
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;
+
+export const ArbitrationOutputSchema = z.object({
+  summary: z.string(),
+  verdict: z.enum(["pass", "fail"]),
+  reason: z.string(),
+  issues: z.array(ReviewIssueSchema),
+});
+
+export type ArbitrationOutput = z.infer<typeof ArbitrationOutputSchema>;
