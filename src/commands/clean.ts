@@ -141,16 +141,23 @@ export function runClean(cwd: string, opts: CleanOptions): number {
 
 export async function cleanWorktrees(
   cwd: string,
-  opts: { dryRun?: boolean; write?: (s: string) => void } = {},
+  opts: { dryRun?: boolean; write?: (s: string) => void; writeErr?: (s: string) => void } = {},
   deps?: WorktreeManagerDeps,
 ): Promise<number> {
   const write = opts.write ?? ((s) => process.stdout.write(s));
+  const writeErr = opts.writeErr ?? ((s) => process.stderr.write(s));
   if (opts.dryRun) {
     const stale = await listStaleWorktrees(cwd, 7 * 86400_000, deps);
     write(`Would remove ${stale.length} stale worktree(s)\n`);
-  } else {
-    const removed = await removeStaleWorktrees(cwd, 7 * 86400_000, deps);
-    write(`Removed ${removed.length} stale worktree(s)\n`);
+    return 0;
+  }
+  const { removed, failed } = await removeStaleWorktrees(cwd, 7 * 86400_000, deps);
+  write(`Removed ${removed.length} stale worktree(s)\n`);
+  if (failed.length > 0) {
+    for (const f of failed) {
+      writeErr(`Failed to remove ${f.path}: ${f.reason}\n`);
+    }
+    return 1;
   }
   return 0;
 }

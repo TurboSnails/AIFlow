@@ -298,3 +298,23 @@ test("cleanWorktrees ignores non-aiflow worktrees", async () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("cleanWorktrees returns non-zero when a worktree removal fails", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-wt-fail-"));
+  const deps: WorktreeManagerDeps = {
+    ...makeWorktreeDeps(
+      [{ path: join(cwd, "repo-aiflow-bad"), branch: "aiflow/bad" }],
+      10 * 86400_000,
+      0,
+    ),
+    runGit: () => Promise.resolve({ exitCode: 1, stdout: "", stderr: "worktree locked" }),
+  };
+  try {
+    let err = "";
+    const code = await cleanWorktrees(cwd, { writeErr: (s) => { err += s; } }, deps);
+    expect(code).toBe(1);
+    expect(err).toContain("worktree locked");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

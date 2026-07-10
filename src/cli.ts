@@ -274,7 +274,7 @@ program
 
 program
   .command("clean")
-  .description("Delete terminal run directories (active runs are never deleted)")
+  .description("Delete terminal run directories and/or stale aiflow worktrees")
   .option("--before <when>", "delete runs older than this (\"<N>d\" or an ISO date)")
   .option("--status <status>", "only delete runs with this terminal status (done|failed|aborted)")
   .option("--keep <n>", "keep the newest N matching runs", (v) => Number(v))

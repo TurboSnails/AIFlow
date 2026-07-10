@@ -153,14 +153,22 @@ export async function removeStaleWorktrees(
   cwd: string,
   maxAgeMs: number = 7 * 86400_000,
   deps: WorktreeManagerDeps = defaultDeps,
-): Promise<string[]> {
+): Promise<{ removed: string[]; failed: Array<{ path: string; reason: string }> }> {
   const stale = await listStaleWorktrees(cwd, maxAgeMs, deps);
   const removed: string[] = [];
+  const failed: Array<{ path: string; reason: string }> = [];
   for (const entry of stale) {
-    const { exitCode: removeCode } = await deps.runGit(cwd, ["worktree", "remove", entry.path]);
-    if (removeCode !== 0) continue;
-    await deps.runGit(cwd, ["branch", "-D", entry.branch]);
+    const { exitCode: removeCode, stderr: removeErr } = await deps.runGit(cwd, ["worktree", "remove", entry.path]);
+    if (removeCode !== 0) {
+      failed.push({ path: entry.path, reason: removeErr || "git worktree remove failed" });
+      continue;
+    }
+    const { exitCode: branchCode, stderr: branchErr } = await deps.runGit(cwd, ["branch", "-D", entry.branch]);
+    if (branchCode !== 0) {
+      failed.push({ path: entry.path, reason: branchErr || "git branch -D failed" });
+      continue;
+    }
     removed.push(entry.path);
   }
-  return removed;
+  return { removed, failed };
 }
