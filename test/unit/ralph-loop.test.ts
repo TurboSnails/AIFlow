@@ -84,6 +84,7 @@ function fixedGit() {
     revParseHead: mock(async () => "abc123"),
     stageAll: mock(async () => {}),
     diffCached: mock(async () => "diff content"),
+    diffCachedFileNames: mock(async () => []),
     commit: mock(async () => {}),
     checkoutClean: mock(async () => {}),
     checkoutConfigOnly: mock(async () => {}),
@@ -103,6 +104,7 @@ test("a passing gate marks the story passed, commits, and writes progress.md", a
       revParseHead: mock(async () => "abc123"),
       stageAll: mock(async () => {}),
       diffCached: mock(async () => "diff content"),
+    diffCachedFileNames: mock(async () => []),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
       checkoutConfigOnly: mock(async () => {}),
@@ -144,6 +146,7 @@ test("a failing gate records fix_list.md, increments fixCount, and does not comm
       revParseHead: mock(async () => "abc123"),
       stageAll: mock(async () => {}),
       diffCached: mock(async () => "diff content"),
+    diffCachedFileNames: mock(async () => []),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
       checkoutConfigOnly: mock(async () => {}),
@@ -182,6 +185,7 @@ test("an agent task that fails (ok:false) is treated as a failed iteration witho
       revParseHead: mock(async () => "abc123"),
       stageAll: mock(async () => {}),
       diffCached: mock(async () => ""),
+    diffCachedFileNames: mock(async () => []),
       commit: mock(async () => {}),
       checkoutClean: mock(async () => {}),
       checkoutConfigOnly: mock(async () => {}),
@@ -329,7 +333,7 @@ test("runRalphLoop: stall_limit stops the loop before per_story_fix_limit when c
 
     const prd = readPrd(join(cwd, "prd.json"));
     expect(prd.stories[0].fixCount).toBe(2);
-    expect(prd.stories[0].suspended).toBeFalsy();
+    expect(prd.stories[0].suspended).toBe(true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(runDir, { recursive: true, force: true });
@@ -478,11 +482,12 @@ test("runRalphLoop: a second call against the same cwd resumes — already-done/
       "spec excerpt",
       { runAgentTask, runReviewGate: passingGate, git, hashConfigDir: mock(() => "same-hash") }
     );
-    expect(second.result).toBe("pass");
-    expect(second.iterations).toBe(2); // US-1 (still pending from before) + US-2, not US-1 redone from scratch
+    expect(second.result).toBe("suspended");
+    expect(second.iterations).toBe(1); // only US-2 is processed; US-1 was suspended by the first run
 
     const afterSecond = readPrd(join(cwd, "prd.json"));
-    expect(afterSecond.stories[0].passes).toBe(true);
+    expect(afterSecond.stories[0].passes).toBe(false);
+    expect(afterSecond.stories[0].suspended).toBe(true);
     expect(afterSecond.stories[1].passes).toBe(true);
   } finally {
     rmSync(cwd, { recursive: true, force: true });

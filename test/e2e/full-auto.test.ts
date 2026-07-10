@@ -6,6 +6,7 @@ import { $ } from "bun";
 import { runCommand } from "../../src/commands/run";
 import type { AgentTask, AgentResult } from "../../src/adapters/opencode";
 import type { LlmCallResult } from "../../src/llm/client";
+import type { WorktreeContext } from "../../src/worktree/manager";
 
 function specContent(): string {
   return `---\nspec_id: full-auto-e2e\nversion: 1\nbranch: main\n---\n# Full-auto E2E spec\n\nNo tasks required for this mocked run.\n`;
@@ -48,6 +49,14 @@ function mockCallLlmFanOut() {
   ]);
 }
 
+function mockCreateWorktree(cwd: string, runId: string): Promise<WorktreeContext> {
+  return Promise.resolve({ originalCwd: cwd, worktreePath: cwd, branch: `aiflow/${runId}` });
+}
+
+function mockRemoveWorktree(): Promise<void> {
+  return Promise.resolve();
+}
+
 test("full-auto pipeline completes with mocks", async () => {
   const cwd = await setupProject();
   try {
@@ -58,6 +67,8 @@ test("full-auto pipeline completes with mocks", async () => {
         runAgentTask: mockRunAgentTask,
         callLlm: mockCallLlm,
         callLlmFanOut: mockCallLlmFanOut as typeof import("../../src/llm/client").callLlmFanOut,
+        createWorktree: mockCreateWorktree,
+        removeWorktree: mockRemoveWorktree,
       },
       { requirement: "Add a mocked feature" }
     );

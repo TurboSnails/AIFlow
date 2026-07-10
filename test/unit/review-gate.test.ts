@@ -190,5 +190,5 @@ test("matrix disagreement triggers arbitrator and uses its final verdict", async
   expect(outcome.aiReview).toBe("fail");
   expect(outcome.blockers).toBe(1);
   expect(outcome.usage).toEqual({ inTok: 30, outTok: 15, costUsd: 0.003 });
-  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets);
+  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets, "unknown");
 });

@@ -25,33 +25,33 @@ test("callReviewer sends an OpenAI-compatible chat completion request and return
     );
   }) as unknown as typeof fetch;
 
-  const result = await callReviewer(profile, "review this diff", fakeFetch);
+  const result = await callReviewer(profile, "review this diff", "unknown", fakeFetch);
   expect(result.data).toEqual({ summary: "ok", issues: [] });
 });
 
 test("callReviewer throws when the API key env var is not set", async () => {
   delete process.env.MISSING_KEY_VAR;
   const badProfile: ModelProfile = { ...profile, api_key_env: "MISSING_KEY_VAR" };
-  await expect(callReviewer(badProfile, "x", (async () => new Response("{}")) as unknown as typeof fetch)).rejects.toThrow();
+  await expect(callReviewer(badProfile, "x", "unknown", (async () => new Response("{}")) as unknown as typeof fetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when the HTTP response is not ok", async () => {
   process.env.TEST_REVIEWER_KEY = "fake-key-value";
   const fakeFetch = (async () => new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
-  await expect(callReviewer(profile, "x", fakeFetch)).rejects.toThrow();
+  await expect(callReviewer(profile, "x", "unknown", fakeFetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when api_key_env is missing from profile", async () => {
   const badProfile: ModelProfile = { ...profile, api_key_env: undefined };
   const fakeFetch = (async () => new Response("{}")) as unknown as typeof fetch;
-  await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
+  await expect(callReviewer(badProfile, "x", "unknown", fakeFetch)).rejects.toThrow();
 });
 
 test("callReviewer throws when base_url is missing from profile", async () => {
   process.env.TEST_REVIEWER_KEY = "fake-key-value";
   const badProfile: ModelProfile = { ...profile, base_url: undefined };
   const fakeFetch = (async () => new Response("{}")) as unknown as typeof fetch;
-  await expect(callReviewer(badProfile, "x", fakeFetch)).rejects.toThrow();
+  await expect(callReviewer(badProfile, "x", "unknown", fakeFetch)).rejects.toThrow();
 });
 
 test("callLlm omits response_format when jsonMode is false, includes it when true", async () => {
@@ -172,7 +172,36 @@ test("callReviewer returns both the parsed JSON payload and usage", async () => 
       { status: 200 }
     )) as unknown as typeof fetch;
 
-  const result = await callReviewer(profile, "review this diff", fakeFetch);
+  const result = await callReviewer(profile, "review this diff", "unknown", fakeFetch);
   expect(result.data).toEqual({ summary: "ok", issues: [] });
   expect(result.usage).toEqual({ inTok: 5, outTok: 2, costUsd: 0 });
+});
+
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { llmRetryContext } from "../../src/llm/client";
+
+test("callLlm emits llm_retry event on retryable failure when a run context is set", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const runDir = mkdtempSync(join(tmpdir(), "llm-retry-"));
+  let calls = 0;
+  const fakeFetch = (async () => {
+    calls += 1;
+    if (calls === 1) return new Response("rate limited", { status: 429 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const result = await llmRetryContext.run({ runDir }, async () => callLlm({ profile, prompt: "x", fetchFn: fakeFetch }));
+  expect(result.text).toBe("ok");
+
+  const events = readFileSync(join(runDir, "events.jsonl"), "utf-8").split("\n").filter(Boolean);
+  expect(events).toHaveLength(1);
+  const parsed = JSON.parse(events[0]);
+  expect(parsed.type).toBe("llm_retry");
+  expect(parsed.stage).toBe("unknown");
+  expect(parsed.attempt).toBe(1);
+  expect(parsed.error).toContain("429");
+
+  rmSync(runDir, { recursive: true, force: true });
 });

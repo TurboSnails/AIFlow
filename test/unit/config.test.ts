@@ -382,7 +382,6 @@ stages:
       ai_review:
         enabled: true
         reviewers: [kimi, ds]
-        use_agent: false
         fail_on: [blocker]
         fail_threshold:
           major: 3

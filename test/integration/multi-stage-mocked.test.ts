@@ -83,10 +83,15 @@ const fakeRunAgentTaskWritingSpec = async (task: { cwd: string }) => {
 test("full pipeline pauses at human_gate, then approve resumes and runs the remaining stages", async () => {
   const dir = await setupProject();
   try {
+    const fakeCreateWorktree = async (cwd: string, runId: string) => ({
+      originalCwd: cwd,
+      worktreePath: cwd,
+      branch: `aiflow/${runId}`,
+    });
     const state = await runCommand(
       dir,
       "full-auto",
-      { runAgentTask: fakeRunAgentTaskWritingSpec, callLlm: fakeCallLlm, callLlmFanOut: fakeCallLlmFanOut },
+      { runAgentTask: fakeRunAgentTaskWritingSpec, callLlm: fakeCallLlm, callLlmFanOut: fakeCallLlmFanOut, createWorktree: fakeCreateWorktree, removeWorktree: async () => {} },
       { requirement: "Add offline cache" }
     );
     expect(state.stages.map((s) => s.status)).toEqual(["done", "done", "waiting_human", "pending", "pending"]);
@@ -289,9 +294,10 @@ test("run creates worktree when isolation=worktree", async () => {
     expect(createCalls).toEqual([{ cwd: dir, runId }]);
     expect(agentCwd).toBe(worktreePath);
     expect(state.stages[0].status).toBe("done");
-    expect(removeCalls).toEqual([{ worktreePath }]);
+    expect(removeCalls).toEqual([]);
+    // full autonomy keeps the worktree/branch for manual merge; cleanup is not performed.
+
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-

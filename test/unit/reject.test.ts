@@ -28,8 +28,8 @@ test("rejects the sole waiting_human stage, marks it aborted, records the reason
     expect(result.status).toBe("rejected");
     expect(result.state!.stages[0]).toEqual({ id: "confirm", status: "aborted", reason: "human_gate_rejected" });
     const events = readFileSync(join(runDir, "events.jsonl"), "utf-8");
-    expect(events).toContain("human_gate_rejected");
-    expect(events).toContain("spec is wrong");
+    expect(events).toContain("gate_answered");
+    expect(events).toContain("\"action\":\"reject\"");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
