@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { writeFileAtomic } from "../atomic/atomic-write";
 import { parseOpenSpec } from "../openspec/parser";
 import { PrdSchema } from "../prd";
 import { registerArtifact } from "../specboard/specboard";
@@ -60,7 +61,7 @@ export async function runPlanStage(
     return { result: "fail", usage: zeroUsage };
   }
 
-  writeFileSync(join(cwd, stageConfig.output), JSON.stringify(validated.data, null, 2));
+  writeFileAtomic(join(cwd, stageConfig.output), JSON.stringify(validated.data, null, 2));
   deps.registerArtifact(runDir, "prd", stageConfig.output);
   appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "pass" });
   return { result: "pass", usage: zeroUsage };

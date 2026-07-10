@@ -74,7 +74,7 @@ test("valid OpenSpec -> pass, correct prd.json, artifact registered", async () =
   }
 });
 
-test("missing spec.md -> parse fails -> stage fail", async () => {
+test("missing spec.md -> stage fail", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-plan-test-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-plan-test-run-"));
   try {
