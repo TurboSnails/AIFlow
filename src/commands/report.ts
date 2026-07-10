@@ -1,7 +1,9 @@
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
+import { readEvents } from "../events/events";
+import { listRunIdsByMtimeDesc } from "../runs/store";
 
 export interface RunReportOptions {
   now: Date;
@@ -91,4 +93,22 @@ export function writeRunReport(runDir: string, state: EngineState, events: Aiflo
   const content = renderRunReport(state, events, opts);
   writeFileSync(join(runDir, "run-report.md"), content);
   return content;
+}
+
+export interface ReportResult {
+  status: "ok" | "no_runs";
+  report?: string;
+}
+
+export function runReport(cwd: string, opts: { runId?: string } = {}): ReportResult {
+  const runId = opts.runId ?? listRunIdsByMtimeDesc(cwd)[0];
+  if (!runId) return { status: "no_runs" };
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  const statePath = join(runDir, "state.json");
+  if (!existsSync(statePath)) return { status: "no_runs" };
+  const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
+  const events = readEvents(runDir);
+  const startedAt = events.length > 0 ? new Date(events[0].ts) : new Date();
+  const report = renderRunReport(state, events, { now: new Date(), startedAt });
+  return { status: "ok", report };
 }

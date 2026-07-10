@@ -1,5 +1,8 @@
 import { test, expect, describe } from "bun:test";
-import { renderRunReport } from "../../src/commands/report";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { renderRunReport, runReport } from "../../src/commands/report";
 import type { EngineState } from "../../src/engine/state";
 import type { AiflowEvent } from "../../src/events/events";
 
@@ -106,4 +109,40 @@ describe("renderRunReport", () => {
     });
     expect(out).toContain("2026-07-05T19:21:30.000Z");
   });
+});
+
+function writeRun(cwd: string, runId: string, state: Partial<EngineState>): void {
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  mkdirSync(runDir, { recursive: true });
+  const full: EngineState = {
+    run_id: runId,
+    pipeline: "demo",
+    stages: [{ id: "s1", status: "done" }],
+    cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    ...state,
+  };
+  writeFileSync(join(runDir, "state.json"), JSON.stringify(full));
+}
+
+test("runReport returns no_runs when there are no runs", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-report-empty-"));
+  try {
+    const result = runReport(cwd, {});
+    expect(result.status).toBe("no_runs");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runReport renders a report for the latest run", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-report-latest-"));
+  try {
+    writeRun(cwd, "20260101_120000_test", {});
+    const result = runReport(cwd, {});
+    expect(result.status).toBe("ok");
+    expect(result.report).toContain("Run report");
+    expect(result.report).toContain("20260101_120000_test");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 });

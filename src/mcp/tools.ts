@@ -46,13 +46,14 @@ export async function handleToolCall(
     case "aiflow_run": {
       const pipeline = String(args.pipeline ?? "");
       if (!pipeline) return textResponse("Missing required argument: pipeline");
-      const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["run", pipeline]);
+      const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["run", "--pipeline", pipeline]);
       return textResponse(stdout || stderr || `aiflow run exited ${exitCode}`);
     }
     case "aiflow_brainstorm": {
       const prompt = String(args.prompt ?? "");
+      const pipeline = String(args.pipeline ?? "brainstorm");
       if (!prompt) return textResponse("Missing required argument: prompt");
-      const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["run", "brainstorm"]);
+      const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["run", "--pipeline", pipeline, "--requirement", prompt]);
       return textResponse(stdout || stderr || `aiflow brainstorm exited ${exitCode}`);
     }
     case "aiflow_review_diff": {

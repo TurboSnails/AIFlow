@@ -316,6 +316,22 @@ program
   });
 
 program
+  .command("report")
+  .description("Print the run-report for the latest or a specific run")
+  .option("--run-id <id>", "target a specific run (defaults to latest)")
+  .action(async (opts: { runId?: string }) => {
+    const { runReport } = await import("./commands/report");
+    const result = runReport(process.cwd(), opts);
+    if (result.status !== "ok") {
+      console.error("No runs found");
+      process.exitCode = 1;
+      return;
+    }
+    console.log(result.report);
+    process.exitCode = 0;
+  });
+
+program
   .command("watch")
   .description("Poll and re-render the current run snapshot every second")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
