@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test";
 import { runDoctorChecks } from "../../src/commands/doctor";
-import type { ModelProfile } from "../../src/config/schema";
+import type { ModelProfile, ProjectConfig } from "../../src/config/schema";
 
 const reviewerProfile: ModelProfile = {
   channel: "http",
@@ -10,13 +10,19 @@ const reviewerProfile: ModelProfile = {
   api_key_env: "TEST_DOCTOR_KEY",
 };
 
+const baseProjectConfig: ProjectConfig = {
+  max_drift_files: 50,
+  on_unresolved: "ask_human",
+  dashboard: { port: 3000, host: "127.0.0.1" },
+};
+
 function baseDeps(overrides: Record<string, unknown> = {}) {
   return {
     checkOpenCodeVersion: mock(async () => "1.17.11"),
     checkGitRepo: mock(async () => true),
     callReviewer: mock(async () => ({ data: { summary: "pong", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })),
     loadModelsConfig: mock(() => ({ profiles: {} })),
-    loadProjectConfig: mock(() => ({ name: "demo", stages: [] })),
+    loadProjectConfig: mock(() => baseProjectConfig),
     listStaleWorktrees: mock(async () => []),
     ...overrides,
   };
@@ -64,14 +70,14 @@ test("reports reviewer unreachable with the error message when the ping call thr
   expect(report.reviewerError).toContain("401 unauthorized");
 });
 
-test("reports a pricing warning for a channel:http profile missing input_cost_per_1m/output_cost_per_1m", async () => {
+test("reports a pricing warning for a channel:http profile missing the canonical price field", async () => {
   process.env.TEST_DOCTOR_KEY = "present";
   const deps = baseDeps({
     loadModelsConfig: mock(() => ({ profiles: { reviewer: reviewerProfile } })),
   });
   const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
   expect(report.pricingWarnings).toContain(
-    'Profile "reviewer" is missing one or both of input_cost_per_1m/output_cost_per_1m; spend will be under-counted in budget and cost reports (missing fields are treated as $0).'
+    'Profile "reviewer" is missing the canonical "price" field (input_cost_per_1m/output_cost_per_1m are compatibility-only); spend will be under-counted in budget and cost reports (missing price is treated as $0).'
   );
 });
 
@@ -79,7 +85,6 @@ test("reports config valid and stale worktrees when configs load", async () => {
   process.env.TEST_DOCTOR_KEY = "present";
   const deps = baseDeps({
     loadModelsConfig: mock(() => ({ profiles: { reviewer: reviewerProfile } })),
-    loadProjectConfig: mock(() => ({ name: "demo", stages: [] })),
     listStaleWorktrees: mock(async () => [{ path: "/tmp/wt", branch: "aiflow/r1" }]),
   });
   const report = await runDoctorChecks("/tmp/whatever", reviewerProfile, deps);
@@ -95,8 +100,6 @@ test("reports config invalid when config loading throws", async () => {
     loadModelsConfig: mock(() => {
       throw new Error("models.yaml invalid");
     }),
-    loadProjectConfig: mock(() => ({ name: "demo", stages: [] })),
-    listStaleWorktrees: mock(async () => []),
   });
   const report = await runDoctorChecks("/tmp/whatever", undefined, deps);
   expect(report.configOk).toBe(false);

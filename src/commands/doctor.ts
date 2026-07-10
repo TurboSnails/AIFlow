@@ -97,9 +97,9 @@ export async function runDoctorChecks(
   if (modelsConfig) {
     for (const [name, profile] of Object.entries(modelsConfig.profiles)) {
       if (profile.channel === "http") {
-        if (profile.input_cost_per_1m === undefined || profile.output_cost_per_1m === undefined) {
+        if (!profile.price) {
           pricingWarnings.push(
-            `Profile "${name}" is missing one or both of input_cost_per_1m/output_cost_per_1m; spend will be under-counted in budget and cost reports (missing fields are treated as $0).`,
+            `Profile "${name}" is missing the canonical "price" field (input_cost_per_1m/output_cost_per_1m are compatibility-only); spend will be under-counted in budget and cost reports (missing price is treated as $0).`,
           );
         }
         if (keyPresent(profile, d.env)) {
