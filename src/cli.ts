@@ -356,4 +356,16 @@ program
     }
   });
 
+program
+  .command("dashboard")
+  .description("Start the AIFlow web dashboard")
+  .option("--port <n>", "port to bind the dashboard server", (v) => Number(v), 8080)
+  .action(async (opts: { port: number }) => {
+    const { runDashboard } = await import("./commands/dashboard");
+    const server = runDashboard(process.cwd(), opts.port);
+    console.log(`Dashboard running at ${server.url}`);
+    console.log("Press Ctrl+C to stop.");
+    await new Promise(() => {});
+  });
+
 program.parseAsync(process.argv);
