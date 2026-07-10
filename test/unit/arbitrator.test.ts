@@ -26,7 +26,7 @@ test("returns final verdict fail", async () => {
   const deps = makeDeps(
     JSON.stringify({ summary: "s", verdict: "fail", reason: "r", issues: [] })
   );
-  const result = await runArbitrator(profile, "diff", [issueSet], deps);
+  const result = await runArbitrator(profile, "diff", [issueSet], [], deps);
   expect(result.verdict).toBe("fail");
 });
 
@@ -39,7 +39,7 @@ test("returns final verdict pass", async () => {
       issues: [],
     })
   );
-  const result = await runArbitrator(profile, "diff", [issueSet], deps);
+  const result = await runArbitrator(profile, "diff", [issueSet], [], deps);
   expect(result.verdict).toBe("pass");
 });
 

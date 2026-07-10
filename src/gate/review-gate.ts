@@ -49,6 +49,7 @@ export interface ReviewGateDeps {
     profile: ModelProfile,
     diff: string,
     issueSets: ReviewOutput[],
+    acceptance: string[],
     stage?: string,
     maxRetrySteps?: number,
     maxTokenCost?: number
@@ -68,8 +69,8 @@ const defaultDeps: ReviewGateDeps = {
   runChecks: realRunChecks,
   callReviewer: realCallReviewer,
   runReviewMatrix: realRunReviewMatrix,
-  runArbitrator: (profile, diff, issueSets, stage, maxRetrySteps, maxTokenCost) =>
-    realRunArbitrator(profile, diff, issueSets, {
+  runArbitrator: (profile, diff, issueSets, acceptance, stage, maxRetrySteps, maxTokenCost) =>
+    realRunArbitrator(profile, diff, issueSets, acceptance, {
       callLlm: defaultCallLlm,
       stage,
       maxRetrySteps,
@@ -153,19 +154,22 @@ export async function runReviewGate(
       stage
     );
     if (matrix.aiReview === "needs_arbitration") {
+      const profiles = deps.reviewers;
+      const mainDevProfile = profiles?.mainDev ?? profiles?.[Object.keys(profiles ?? {})[0]] ?? reviewerProfile;
       const runArb =
         deps.runArbitrator ??
-        ((profile, d, issues, s, maxRetrySteps, maxTokenCost) =>
-          realRunArbitrator(profile, d, issues, {
+        ((profile, d, issues, acceptance, s, maxRetrySteps, maxTokenCost) =>
+          realRunArbitrator(profile, d, issues, acceptance, {
             callLlm: defaultCallLlm,
             stage: s,
             maxRetrySteps,
             maxTokenCost,
           }));
       const arbitration = await runArb(
-        reviewerProfile,
+        mainDevProfile,
         diff,
         matrix.issueSets,
+        storyAcceptance,
         stage,
         deps.maxRetrySteps,
         deps.maxTokenCost

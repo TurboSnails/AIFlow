@@ -2,6 +2,35 @@ import type { ModelProfile, ReviewGateConfig } from "../config/schema";
 import { ReviewOutputSchema, type ReviewIssue, type ReviewOutput } from "../gate/review-schema";
 import { buildReviewPrompt } from "../gate/review-gate";
 
+function reviewerVerdict(
+  output: ReviewOutput,
+  failOn: string[],
+  threshold: Record<string, number> | undefined
+): "pass" | "fail" {
+  const counts = output.issues.reduce((acc, i) => {
+    acc[i.severity] = (acc[i.severity] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const blocked = output.issues.filter((i) => failOn.includes(i.severity)).length;
+  if (blocked > 0) return "fail";
+  if (threshold) {
+    for (const [severity, limit] of Object.entries(threshold)) {
+      if ((counts[severity] ?? 0) >= limit) return "fail";
+    }
+  }
+  return "pass";
+}
+
+export function deduplicateIssues(issues: ReviewIssue[]): ReviewIssue[] {
+  const seen = new Set<string>();
+  return issues.filter((i) => {
+    const key = `${i.file}:${Math.floor((i.line ?? 0) / 3)}:${i.severity}:${i.title}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export interface ReviewMatrixDeps {
   callReviewer: (
     profile: ModelProfile,
@@ -81,12 +110,13 @@ export async function runReviewMatrix(
             usage: callUsage,
           };
         }
-        const hasIssues = parsed.data.issues.length > 0;
+        const verdict = reviewerVerdict(parsed.data, config.fail_on, config.fail_threshold);
+        const issues = deduplicateIssues(parsed.data.issues);
         return {
           name,
-          verdict: hasIssues ? ("fail" as const) : ("pass" as const),
+          verdict,
           summary: parsed.data.summary,
-          issues: parsed.data.issues,
+          issues,
           usage: callUsage,
         };
       } catch {

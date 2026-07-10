@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { runReviewMatrix } from "../../src/review/matrix";
+import { runReviewMatrix, deduplicateIssues } from "../../src/review/matrix";
+import type { ReviewIssue } from "../../src/gate/review-schema";
 import type { ModelProfile } from "../../src/config/schema";
 
 const reviewer: ModelProfile = {
@@ -107,7 +108,7 @@ test("multiple reviewers run in parallel and return needs_arbitration on split v
 
 test("all reviewers failing returns fail with merged issues", async () => {
   const issueA = { severity: "blocker", file: "a.ts", line: 1, title: "ta", detail: "da", suggestion: "sa" };
-  const issueB = { severity: "major", file: "b.ts", line: 2, title: "tb", detail: "db", suggestion: "sb" };
+  const issueB = { severity: "blocker", file: "b.ts", line: 2, title: "tb", detail: "db", suggestion: "sb" };
   const deps = makeDeps({ m: { issues: [issueA] }, m2: { issues: [issueB] } });
   const result = await runReviewMatrix(
     { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
@@ -318,4 +319,27 @@ test("all configured reviewers missing from reviewers map returns fail when stri
   expect(result.issues).toEqual([]);
   expect(result.issueSets).toEqual([]);
   expect(result.usage).toEqual({ inTok: 0, outTok: 0, costUsd: 0 });
+});
+
+test("multi-reviewer path respects fail_on: major issues do not fail when only blocker is fail_on", async () => {
+  const majorIssue = { severity: "major", file: "f.ts", line: 1, title: "t", detail: "d", suggestion: "s" };
+  const deps = makeDeps({ m: { issues: [majorIssue] }, m2: { issues: [majorIssue] } });
+  const result = await runReviewMatrix(
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], fail_threshold: { major: 5 }, strict: false },
+    { a: reviewer, b: reviewer2 },
+    "other",
+    "/tmp",
+    "diff",
+    ["acceptance"],
+    deps
+  );
+  expect(result.aiReview).toBe("pass");
+});
+
+test("deduplicates issues within line±3 buckets", () => {
+  const issues: ReviewIssue[] = [
+    { severity: "major", file: "f.ts", line: 1, title: "t", detail: "d", suggestion: "s" },
+    { severity: "major", file: "f.ts", line: 2, title: "t", detail: "d", suggestion: "s" },
+  ];
+  expect(deduplicateIssues(issues)).toHaveLength(1);
 });

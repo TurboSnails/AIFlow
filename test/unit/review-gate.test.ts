@@ -190,7 +190,7 @@ test("matrix disagreement triggers arbitrator and uses its final verdict", async
   expect(outcome.aiReview).toBe("fail");
   expect(outcome.blockers).toBe(1);
   expect(outcome.usage).toEqual({ inTok: 30, outTok: 15, costUsd: 0.003 });
-  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets, "unknown", undefined, undefined);
+  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets, ["accept"], "unknown", undefined, undefined);
 });
 
 test("all reviewers skipped in matrix normalizes final to pass and does not throw", async () => {
