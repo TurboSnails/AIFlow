@@ -9,23 +9,36 @@ export interface DebateDeps {
   callLlm: typeof callLlm;
 }
 
+export interface Usage {
+  inTok: number;
+  outTok: number;
+  costUsd: number;
+}
+
+export interface RoundSummary {
+  round: number;
+  resolved: number;
+  remaining: number;
+}
+
+/** Public result shape returned by {@link runDebate}. */
 export interface DebateResult {
   report: string;
   openQuestions: OpenQuestion[];
   decisions: Decision[];
   rounds: number;
-  /** High-level outcome of the debate. */
+}
+
+/** Internal outcome shape used by the runner and tests that need telemetry. */
+export interface DebateOutcome extends DebateResult {
   result: "pass" | "fail";
-  /** Why the debate stopped. Only meaningful when result is "pass". */
-  reason: "converged" | "max_rounds" | "stalled";
-  /** Number of models that produced a usable round-1 proposal. */
+  reason?: "converged" | "max_rounds" | "stalled";
   successes: number;
-  /** True if the budget was exceeded before the debate could finish. */
   overBudget: boolean;
-  /** Aggregated token and cost usage across all LLM calls. */
-  usage: { inTok: number; outTok: number; costUsd: number };
-  /** Per-round summary of resolved and remaining disputes. */
-  roundSummaries: { round: number; resolved: number; remaining: number }[];
+  usage: Usage;
+  roundSummaries: RoundSummary[];
+  /** Raw moderator output when the failure was caused by a moderator parse error. */
+  rawModeratorText?: string;
 }
 
 interface RoundEntry {
@@ -39,9 +52,9 @@ interface RoundEntry {
 }
 
 function addUsage(
-  usage: DebateResult["usage"],
+  usage: Usage,
   result?: { usage: LlmCallResult["usage"] }
-): DebateResult["usage"] {
+): Usage {
   if (!result) return usage;
   return {
     inTok: usage.inTok + result.usage.inTok,
@@ -164,13 +177,13 @@ function toRoundEntries(
   });
 }
 
-export async function runDebate(
+export async function runDebateInternal(
   config: BrainstormStageConfig,
   requirement: string,
   profiles: Record<string, ModelProfile>,
   deps: DebateDeps,
   budget?: BudgetTracker
-): Promise<DebateResult> {
+): Promise<DebateOutcome> {
   const synthesizer = profiles[config.synthesizer];
   if (!synthesizer) throw new Error(`Synthesizer model "${config.synthesizer}" not found`);
 
@@ -180,7 +193,7 @@ export async function runDebate(
     return p;
   });
 
-  let usage: DebateResult["usage"] = { inTok: 0, outTok: 0, costUsd: 0 };
+  let usage: Usage = { inTok: 0, outTok: 0, costUsd: 0 };
   let overBudget = false;
 
   // Round 1: independent proposals.
@@ -227,9 +240,9 @@ export async function runDebate(
   let priorDisputes: DebateDispute[] = [];
   let lastRemaining: DebateDispute[] = [];
   const resolvedById = new Map<string, Decision>();
-  let reason: DebateResult["reason"] = "max_rounds";
+  let reason: DebateOutcome["reason"] = "max_rounds";
   let rounds = 1;
-  const roundSummaries: DebateResult["roundSummaries"] = [];
+  const roundSummaries: RoundSummary[] = [];
 
   for (let roundNumber = 1; roundNumber <= config.debate_rounds; roundNumber++) {
     const proposals = currentRound
@@ -278,6 +291,7 @@ export async function runDebate(
         overBudget: false,
         usage,
         roundSummaries,
+        rawModeratorText: moderatorResult.text,
       };
     }
 
@@ -347,4 +361,25 @@ export async function runDebate(
     usage,
     roundSummaries,
   };
+}
+
+/** Public entry point: returns a minimal {@link DebateResult} or throws on failure. */
+export async function runDebate(
+  config: BrainstormStageConfig,
+  requirement: string,
+  profiles: Record<string, ModelProfile>,
+  deps: DebateDeps,
+  budget?: BudgetTracker
+): Promise<DebateResult> {
+  const outcome = await runDebateInternal(config, requirement, profiles, deps, budget);
+  if (outcome.result === "fail") {
+    const parts = [`Debate failed: ${outcome.reason ?? "unknown"}`];
+    if (outcome.rawModeratorText) {
+      parts.push("Raw moderator output:");
+      parts.push(outcome.rawModeratorText);
+    }
+    throw new Error(parts.join("\n"));
+  }
+  const { report, openQuestions, decisions, rounds } = outcome;
+  return { report, openQuestions, decisions, rounds };
 }

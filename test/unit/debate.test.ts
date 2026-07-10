@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import { runDebate } from "../../src/debate/orchestrator";
+import { runDebate, runDebateInternal } from "../../src/debate/orchestrator";
 import type { ModelProfile } from "../../src/config/schema";
 
 const profiles: Record<string, ModelProfile> = {
@@ -44,7 +44,6 @@ test("debate converges in two rounds", async () => {
     deps
   );
 
-  expect(result.result).toBe("pass");
   expect(result.openQuestions).toHaveLength(0);
   expect(result.decisions).toHaveLength(1);
   expect(result.decisions[0]).toMatchObject({ id: "D0", topic: "t", resolution: "r" });
@@ -78,7 +77,6 @@ test("debate stops early when disputes diverge", async () => {
     deps
   );
 
-  expect(result.result).toBe("pass");
   expect(result.openQuestions).toHaveLength(1);
   expect(result.openQuestions[0]).toMatchObject({ id: "Q1", topic: "t", positions: { a: "x", b: "y" } });
   expect(result.decisions).toHaveLength(0);
@@ -93,23 +91,22 @@ test("invalid moderator output fails the stage instead of reporting convergence"
     })),
   });
 
-  const result = await runDebate(
-    {
-      id: "b",
-      type: "brainstorm",
-      models: ["a", "b"],
-      mode: "debate",
-      debate_rounds: 2,
-      synthesizer: "a",
-      output: "report.md",
-    },
-    "req",
-    profiles,
-    deps
-  );
-
-  expect(result.result).toBe("fail");
-  expect(result.report).toContain("not valid json");
+  await expect(
+    runDebate(
+      {
+        id: "b",
+        type: "brainstorm",
+        models: ["a", "b"],
+        mode: "debate",
+        debate_rounds: 2,
+        synthesizer: "a",
+        output: "report.md",
+      },
+      "req",
+      profiles,
+      deps
+    )
+  ).rejects.toThrow("not valid json");
 });
 
 test("round 2 prompt excludes a model's own prior proposal", async () => {
@@ -146,7 +143,7 @@ test("round 2 prompt excludes a model's own prior proposal", async () => {
     })),
   });
 
-  await runDebate(
+  await runDebateInternal(
     {
       id: "b",
       type: "brainstorm",

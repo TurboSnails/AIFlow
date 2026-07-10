@@ -7,7 +7,7 @@ import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { BrainstormStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
-import { runDebate } from "../debate/orchestrator";
+import { runDebateInternal, type DebateOutcome } from "../debate/orchestrator";
 import { registerArtifact, addOpenQuestions, addDecisions } from "../specboard/specboard";
 
 type FanOutResult = { profile: ModelProfile; ok: boolean; result?: LlmCallResult; error?: string };
@@ -81,7 +81,7 @@ export async function runBrainstormStage(
   const requirement = existsSync(requirementPath) ? readFileSync(requirementPath, "utf-8") : "";
 
   if (stageConfig.mode === "debate") {
-    const debate = await runDebate(stageConfig, requirement, profiles, deps, budget);
+    const debate: DebateOutcome = await runDebateInternal(stageConfig, requirement, profiles, deps, budget);
 
     if (debate.overBudget) {
       return { result: "paused", reason: "budget_exceeded", usage: debate.usage };
