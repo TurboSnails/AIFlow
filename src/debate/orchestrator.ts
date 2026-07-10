@@ -88,7 +88,16 @@ function renderResponsePrompt(
     "Critique the other proposals and revise your own proposal in response.",
   ];
   if (priorDisputes.length > 0) {
-    lines.push("", "## Open disputes from the previous round", ...priorDisputes.map((d) => `- ${d.id}: ${d.topic}`));
+    lines.push(
+      "",
+      "## Open disputes from the previous round",
+      ...priorDisputes.flatMap((d) => {
+        const positionLines = Object.entries(d.positions)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([modelName, position]) => `  - ${modelName}: ${position}`);
+        return [`- ${d.id}: ${d.topic}`, ...positionLines];
+      })
+    );
   }
   lines.push("", `Respond as ${label}.`);
   return lines.join("\n");

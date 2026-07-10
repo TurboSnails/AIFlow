@@ -162,6 +162,10 @@ test("round 2 prompt excludes a model's own prior proposal", async () => {
   expect(round2Prompts.b).toBeDefined();
   expect(round2Prompts.a).not.toContain("ROUND1_TEXT_FROM_A");
   expect(round2Prompts.a).toContain("ROUND1_TEXT_FROM_B");
+  expect(round2Prompts.a).toContain("a: x");
+  expect(round2Prompts.a).toContain("b: y");
   expect(round2Prompts.b).not.toContain("ROUND1_TEXT_FROM_B");
   expect(round2Prompts.b).toContain("ROUND1_TEXT_FROM_A");
+  expect(round2Prompts.b).toContain("a: x");
+  expect(round2Prompts.b).toContain("b: y");
 });

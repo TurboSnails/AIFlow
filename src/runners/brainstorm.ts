@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFileAtomic } from "../atomic/atomic-write";
 import { callLlm, callLlmFanOut, type LlmCallResult } from "../llm/client";
 import { appendEvent } from "../events/events";
@@ -172,7 +172,7 @@ export async function runBrainstormStage(
   const appendix = finalRound
     .map((r, i) => (r.ok && r.result ? `## Model ${i + 1}\n${r.result.text}` : `## Model ${i + 1}\n(failed: ${r.error})`))
     .join("\n\n");
-  writeFileSync(join(artifactsDir, stageConfig.output), `${synthesis.text}\n\n---\n\n# Raw proposals\n\n${appendix}\n`);
+  writeFileAtomic(join(artifactsDir, stageConfig.output), `${synthesis.text}\n\n---\n\n# Raw proposals\n\n${appendix}\n`);
 
   appendEvent(runDir, {
     ts: new Date().toISOString(),
