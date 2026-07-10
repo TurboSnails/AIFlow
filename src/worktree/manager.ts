@@ -148,3 +148,19 @@ export async function listStaleWorktrees(
     return now - mtime > maxAgeMs;
   });
 }
+
+export async function removeStaleWorktrees(
+  cwd: string,
+  maxAgeMs: number = 7 * 86400_000,
+  deps: WorktreeManagerDeps = defaultDeps,
+): Promise<string[]> {
+  const stale = await listStaleWorktrees(cwd, maxAgeMs, deps);
+  const removed: string[] = [];
+  for (const entry of stale) {
+    const { exitCode: removeCode } = await deps.runGit(cwd, ["worktree", "remove", entry.path]);
+    if (removeCode !== 0) continue;
+    await deps.runGit(cwd, ["branch", "-D", entry.branch]);
+    removed.push(entry.path);
+  }
+  return removed;
+}

@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { selectRunsToClean, parseBefore, runClean } from "../../src/commands/clean";
+import { selectRunsToClean, parseBefore, runClean, cleanWorktrees } from "../../src/commands/clean";
+import type { WorktreeManagerDeps, WorktreeEntry } from "../../src/worktree/manager";
 import type { RunRow } from "../../src/commands/runs";
 import type { EngineState } from "../../src/engine/state";
 
@@ -223,6 +224,77 @@ test("runClean refuses to delete in non-TTY without --yes or confirm", () => {
     expect(existsSync(join(cwd, ".aiflow", "runs", "done1"))).toBe(true);
   } finally {
     process.stdin.isTTY = previousIsTty;
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// --- cleanWorktrees tests ---
+
+function makeWorktreeDeps(entries: WorktreeEntry[], nowMs: number, mtimeMs: number): WorktreeManagerDeps {
+  return {
+    runGit: () => Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }),
+    listWorktrees: () => Promise.resolve(entries),
+    now: () => nowMs,
+    statMtime: () => mtimeMs,
+  };
+}
+
+test("cleanWorktrees removes stale aiflow worktrees", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-wt-"));
+  const calls: string[][] = [];
+  const deps: WorktreeManagerDeps = {
+    ...makeWorktreeDeps(
+      [{ path: join(cwd, "repo-aiflow-run1"), branch: "aiflow/run1" }],
+      10 * 86400_000,
+      0,
+    ),
+    runGit: (_cwd, args) => {
+      calls.push(args);
+      return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    },
+  };
+  try {
+    let out = "";
+    const code = await cleanWorktrees(cwd, { write: (s) => { out += s; } }, deps);
+    expect(code).toBe(0);
+    expect(out).toContain("Removed 1 stale worktree(s)");
+    expect(calls).toContainEqual(["worktree", "remove", join(cwd, "repo-aiflow-run1")]);
+    expect(calls).toContainEqual(["branch", "-D", "aiflow/run1"]);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("cleanWorktrees dry-run lists stale worktrees without removing", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-wt-dry-"));
+  const deps = makeWorktreeDeps(
+    [{ path: join(cwd, "repo-aiflow-run2"), branch: "aiflow/run2" }],
+    10 * 86400_000,
+    0,
+  );
+  try {
+    let out = "";
+    const code = await cleanWorktrees(cwd, { dryRun: true, write: (s) => { out += s; } }, deps);
+    expect(code).toBe(0);
+    expect(out).toContain("Would remove 1 stale worktree(s)");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("cleanWorktrees ignores non-aiflow worktrees", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-clean-wt-ignore-"));
+  const deps = makeWorktreeDeps(
+    [{ path: join(cwd, "repo-other"), branch: "main" }],
+    10 * 86400_000,
+    0,
+  );
+  try {
+    let out = "";
+    const code = await cleanWorktrees(cwd, { write: (s) => { out += s; } }, deps);
+    expect(code).toBe(0);
+    expect(out).toContain("Removed 0 stale worktree(s)");
+  } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
 });

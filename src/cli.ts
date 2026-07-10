@@ -280,22 +280,39 @@ program
   .option("--keep <n>", "keep the newest N matching runs", (v) => Number(v))
   .option("--dry-run", "show what would be deleted without deleting", false)
   .option("--yes", "skip the confirmation prompt", false)
-  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean }) => {
-    const { runClean } = await import("./commands/clean");
-    const confirm = process.stdin.isTTY
-      ? () => {
-          const answer = prompt("Delete these runs? (y/N)");
-          return answer?.trim().toLowerCase() === "y";
-        }
-      : undefined;
-    process.exitCode = runClean(process.cwd(), {
-      before: opts.before,
-      status: opts.status,
-      keep: opts.keep,
-      dryRun: opts.dryRun,
-      yes: opts.yes,
-      confirm: opts.yes ? undefined : confirm,
-    });
+  .option("--worktrees", "remove stale aiflow worktrees", false)
+  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; worktrees: boolean }) => {
+    const { runClean, cleanWorktrees } = await import("./commands/clean");
+    let code = 0;
+    if (opts.worktrees) {
+      code = await cleanWorktrees(process.cwd(), { dryRun: opts.dryRun });
+      if (code !== 0) {
+        process.exitCode = code;
+        return;
+      }
+    }
+    if (opts.before || opts.status || opts.keep) {
+      const confirm = process.stdin.isTTY
+        ? () => {
+            const answer = prompt("Delete these runs? (y/N)");
+            return answer?.trim().toLowerCase() === "y";
+          }
+        : undefined;
+      const runCode = runClean(process.cwd(), {
+        before: opts.before,
+        status: opts.status,
+        keep: opts.keep,
+        dryRun: opts.dryRun,
+        yes: opts.yes,
+        confirm: opts.yes ? undefined : confirm,
+      });
+      if (runCode !== 0) code = runCode;
+    }
+    if (!opts.worktrees && !opts.before && !opts.status && !opts.keep) {
+      process.stderr.write("clean requires at least one of --before, --status, --keep, --worktrees\n");
+      code = 1;
+    }
+    process.exitCode = code;
   });
 
 program

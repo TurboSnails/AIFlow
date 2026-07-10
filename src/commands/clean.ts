@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { buildRunRows, type RunRow } from "./runs";
 import { runsRoot, formatRunAge } from "../runs/store";
+import { listStaleWorktrees, removeStaleWorktrees, type WorktreeManagerDeps } from "../worktree/manager";
 
 const CLEANABLE_STATUSES = new Set(["done", "failed", "aborted"]);
 
@@ -135,5 +136,21 @@ export function runClean(cwd: string, opts: CleanOptions): number {
   }
   write(`Deleted ${toDelete.length} run(s)\n`);
   if (kept.length > 0) write(`Kept ${kept.length} run(s)\n`);
+  return 0;
+}
+
+export async function cleanWorktrees(
+  cwd: string,
+  opts: { dryRun?: boolean; write?: (s: string) => void } = {},
+  deps?: WorktreeManagerDeps,
+): Promise<number> {
+  const write = opts.write ?? ((s) => process.stdout.write(s));
+  if (opts.dryRun) {
+    const stale = await listStaleWorktrees(cwd, 7 * 86400_000, deps);
+    write(`Would remove ${stale.length} stale worktree(s)\n`);
+  } else {
+    const removed = await removeStaleWorktrees(cwd, 7 * 86400_000, deps);
+    write(`Removed ${removed.length} stale worktree(s)\n`);
+  }
   return 0;
 }
