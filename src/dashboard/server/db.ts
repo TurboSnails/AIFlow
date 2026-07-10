@@ -83,7 +83,12 @@ function parseEventLine(line: string): { ts: string; type: string; payload: stri
   return { ts: result.data.ts, type: result.data.type, payload: line };
 }
 
-export function tailRun(db: Database, runDir: string, cursor?: number): { cursor: number; ingested: number } {
+export function tailRun(
+  db: Database,
+  runDir: string,
+  cursor?: number,
+  onEvent?: (event: DashboardEvent) => void,
+): { cursor: number; ingested: number } {
   const runId = basename(runDir);
   const eventsPath = join(runDir, "events.jsonl");
   let size: number;
@@ -116,6 +121,13 @@ export function tailRun(db: Database, runDir: string, cursor?: number): { cursor
   for (const line of lines) {
     const parsed = parseEventLine(line);
     if (!parsed) continue;
+    if (onEvent) {
+      try {
+        onEvent(JSON.parse(line) as DashboardEvent);
+      } catch {
+        // ignore malformed lines; parseEventLine already validated
+      }
+    }
     rows.push(parsed);
   }
   const nextCursor = start + Buffer.byteLength(text, "utf-8");

@@ -1,0 +1,46 @@
+import { test, expect } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { WebSocket } from "ws";
+import { broadcastEvent } from "../../src/dashboard/server/ws";
+import { startCollector } from "../../src/dashboard/server/collector";
+
+test("broadcastEvent sends JSON to ready clients", () => {
+  const messages: string[] = [];
+  const clientA = { readyState: 1, send: (msg: string) => messages.push(msg) } as unknown as WebSocket;
+  const clientB = { readyState: 0, send: (msg: string) => messages.push(msg) } as unknown as WebSocket;
+  const wss = { clients: new Set([clientA, clientB]) } as unknown as import("ws").WebSocketServer;
+
+  broadcastEvent(wss, { type: "stage_start", stage: "plan" });
+  expect(messages).toHaveLength(1);
+  expect(JSON.parse(messages[0])).toEqual({ type: "stage_start", stage: "plan" });
+});
+
+test("collector broadcasts new events via broadcaster", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "ws-collector-"));
+  const runDir = join(runsRoot, "r1");
+  mkdirSync(runDir);
+  writeFileSync(join(runDir, "events.jsonl"), "\n");
+
+  const dbPath = join(runsRoot, "dashboard.db");
+  const broadcasts: object[] = [];
+  const collector = startCollector(
+    runsRoot,
+    dbPath,
+    { usePolling: true, interval: 20, awaitWriteFinish: false },
+    { broadcast: (event: object) => broadcasts.push(event) }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  appendFileSync(
+    join(runDir, "events.jsonl"),
+    JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start", stage: "plan" }) + "\n"
+  );
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  expect(broadcasts.length).toBeGreaterThanOrEqual(1);
+  expect(broadcasts[0]).toMatchObject({ type: "stage_start", stage: "plan" });
+
+  await collector.close();
+});

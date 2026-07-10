@@ -3,6 +3,10 @@ import type { WatchOptions } from "chokidar";
 import { basename, dirname } from "node:path";
 import { createDb, tailRun } from "./db";
 
+export interface Broadcaster {
+  broadcast(event: object): void;
+}
+
 export interface Collector {
   close: () => Promise<void>;
 }
@@ -11,7 +15,12 @@ function isEventsJsonl(path: string): boolean {
   return basename(path) === "events.jsonl";
 }
 
-export function startCollector(runsRoot: string, dbPath: string, options?: WatchOptions): Collector {
+export function startCollector(
+  runsRoot: string,
+  dbPath: string,
+  options?: WatchOptions,
+  broadcaster?: Broadcaster,
+): Collector {
   const db = createDb(dbPath);
   const watcher = chokidar.watch(runsRoot, {
     ignored: dbPath,
@@ -24,7 +33,7 @@ export function startCollector(runsRoot: string, dbPath: string, options?: Watch
   const ingest = (eventsPath: string) => {
     if (!isEventsJsonl(eventsPath)) return;
     const runDir = dirname(eventsPath);
-    tailRun(db, runDir);
+    tailRun(db, runDir, undefined, broadcaster ? (event) => broadcaster.broadcast(event) : undefined);
   };
 
   watcher.on("add", ingest).on("change", ingest);
