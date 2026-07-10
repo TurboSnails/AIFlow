@@ -73,3 +73,57 @@ test("uses latest run when runId is omitted", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("aborts waiting_human stages", () => {
+  const runId = "20260101_120000_wait";
+  const runDir = makeRunDir(runId);
+  const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
+  try {
+    writeFileSync(
+      join(runDir, "state.json"),
+      JSON.stringify({
+        run_id: runId,
+        pipeline: "dev",
+        stages: [{ id: "s1", status: "waiting_human" }],
+        cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      })
+    );
+
+    const result = runAbort(dir, { runId });
+
+    expect(result.status).toBe("aborted");
+    const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(updated.stages[0].status).toBe("aborted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("leaves terminal stages unchanged", () => {
+  const runId = "20260101_120000_term";
+  const runDir = makeRunDir(runId);
+  const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
+  try {
+    writeFileSync(
+      join(runDir, "state.json"),
+      JSON.stringify({
+        run_id: runId,
+        pipeline: "dev",
+        stages: [
+          { id: "done", status: "done" },
+          { id: "failed", status: "failed" },
+          { id: "aborted", status: "aborted" },
+        ],
+        cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      })
+    );
+
+    const result = runAbort(dir, { runId });
+
+    expect(result.status).toBe("aborted");
+    const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(updated.stages.map((s: { status: string }) => s.status)).toEqual(["done", "failed", "aborted"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

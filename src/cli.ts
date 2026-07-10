@@ -210,7 +210,7 @@ program
   .option("--run-id <id>", "target a specific run (defaults to latest)")
   .action(async (opts: { runId?: string }) => {
     const { runAbort } = await import("./commands/abort");
-    await withRunLock(process.cwd(), opts.runId ?? "pending-abort", () => {
+    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-abort", () => {
       const result = runAbort(process.cwd(), opts);
       if (result.status !== "aborted") {
         console.error(result.status === "no_runs" ? "No runs found" : "Could not abort run");
@@ -220,6 +220,7 @@ program
       console.log(`Run ${result.runId}: aborted`);
       process.exitCode = 0;
     });
+    if (done === undefined) return;
   });
 
 program
