@@ -113,7 +113,7 @@ export async function runCommand(
       spec: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
         runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { runAgentTask }, budget),
       plan: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
-        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { callLlm: callLlmFn }, budget),
+        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, undefined, budget),
       human_gate: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, _budget) =>
         runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal),
     },

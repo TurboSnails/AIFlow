@@ -92,14 +92,12 @@ test("full pipeline pauses at human_gate, then approve resumes and runs the rema
     expect(existsSync(join(dir, "spec.md"))).toBe(true);
 
     // approve triggers a resume, which re-enters runPipelineOnce with NO deps of its own in
-    // the real CLI path — so it falls back entirely to engine.ts's defaultDeps.runners (Task 10),
-    // which for `plan` means the REAL callLlm. Override both `plan` and `ralph_loop` here so this
-    // stays a hermetic mocked test — only `human_gate`/`spec`/`brainstorm` are skipped (already done).
+    // the real CLI path — so it falls back entirely to engine.ts's defaultDeps.runners. Plan
+    // now parses the OpenSpec produced by the spec stage, so only ralph_loop needs to be
+    // mocked here to keep the test hermetic.
     const runId = state.run_id;
     const approveResult = await runApprove(dir, { runId }, {
       runners: {
-        plan: (stageConfig, stageState, profiles, cwd2, runDir2, nowFn, signal) =>
-          runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, cwd2, runDir2, nowFn, signal, { callLlm: fakeCallLlm }),
         ralph_loop: async () => ({ result: "pass" }),
       },
     });

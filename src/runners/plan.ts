@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { callLlm } from "../llm/client";
+import { parseOpenSpec } from "../openspec/parser";
 import { PrdSchema } from "../prd";
+import { registerArtifact } from "../specboard/specboard";
 import { appendEvent } from "../events/events";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { PlanStageConfig, ModelProfile } from "../config/schema";
@@ -9,66 +10,58 @@ import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
 
 export interface PlanDeps {
-  callLlm: typeof callLlm;
+  parseOpenSpec: typeof parseOpenSpec;
+  registerArtifact: typeof registerArtifact;
 }
 
-const defaultDeps: PlanDeps = { callLlm };
+const defaultDeps: PlanDeps = { parseOpenSpec, registerArtifact };
 
-function renderPlanPrompt(specText: string, priorError?: string): string {
-  const lines = [
-    "Convert the following spec into a JSON object matching exactly this shape:",
-    '{"branchName": string, "stories": [{"id": string, "title": string, "acceptance": string[], "priority": number, "passes": false, "fixCount": 0}]}',
-    "Respond with ONLY the JSON object.",
-    "",
-    "## Spec",
-    specText,
-  ];
-  if (priorError) lines.push("", `Your previous response failed validation: ${priorError}`);
-  return lines.join("\n");
-}
+const zeroUsage = { inTok: 0, outTok: 0, costUsd: 0 };
 
 export async function runPlanStage(
   stageConfig: PlanStageConfig,
   _stageState: StageState,
-  profiles: Record<string, ModelProfile>,
+  _profiles: Record<string, ModelProfile>,
   cwd: string,
   runDir: string,
   _nowFn: () => Date,
   _signal: AbortSignal | undefined,
   deps: PlanDeps = defaultDeps,
-  budget: BudgetTracker = noopBudgetTracker
+  _budget: BudgetTracker = noopBudgetTracker
 ): Promise<StageOutcome> {
   const specPath = join(cwd, stageConfig.input);
-  const specText = existsSync(specPath) ? readFileSync(specPath, "utf-8") : "";
-  const profile = profiles[stageConfig.model];
-
-  const usage = { inTok: 0, outTok: 0, costUsd: 0 };
-  let lastError: string | undefined;
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = await deps.callLlm({ profile, prompt: renderPlanPrompt(specText, lastError), jsonMode: true });
-    usage.inTok += result.usage.inTok;
-    usage.outTok += result.usage.outTok;
-    usage.costUsd += result.usage.costUsd;
-
-    if (budget.record(result.usage.costUsd)) {
-      return { result: "paused", reason: "budget_exceeded", usage };
-    }
-
-    try {
-      const parsed = JSON.parse(result.text);
-      const validated = PrdSchema.safeParse(parsed);
-      if (validated.success) {
-        writeFileSync(join(cwd, stageConfig.output), JSON.stringify(validated.data, null, 2));
-        appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "pass" });
-        return { result: "pass", usage };
-      }
-      lastError = validated.error.message;
-    } catch (err) {
-      lastError = String(err);
-    }
+  if (!existsSync(specPath)) {
+    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
+    return { result: "fail", usage: zeroUsage };
   }
 
-  appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
-  return { result: "fail", usage };
+  const specText = readFileSync(specPath, "utf-8");
+  const parsed = deps.parseOpenSpec(specText);
+  if (!parsed.success) {
+    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
+    return { result: "fail", usage: zeroUsage };
+  }
+
+  const prd = {
+    branchName: parsed.spec.meta.branch,
+    stories: parsed.spec.tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      acceptance: task.acceptance,
+      priority: task.priority,
+      passes: false,
+      fixCount: 0,
+    })),
+  };
+
+  const validated = PrdSchema.safeParse(prd);
+  if (!validated.success) {
+    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
+    return { result: "fail", usage: zeroUsage };
+  }
+
+  writeFileSync(join(cwd, stageConfig.output), JSON.stringify(validated.data, null, 2));
+  deps.registerArtifact(runDir, "prd", stageConfig.output);
+  appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "pass" });
+  return { result: "pass", usage: zeroUsage };
 }
