@@ -45,10 +45,10 @@ test("returns final verdict pass", async () => {
 
 test("throws when LLM returns invalid JSON", async () => {
   const deps = makeDeps("not-json");
-  await expect(runArbitrator(profile, "diff", [issueSet], deps)).rejects.toThrow();
+  await expect(runArbitrator(profile, "diff", [issueSet], [], deps)).rejects.toThrow();
 });
 
 test("throws when LLM returns JSON that fails schema validation", async () => {
   const deps = makeDeps(JSON.stringify({ summary: "s", verdict: "maybe" }));
-  await expect(runArbitrator(profile, "diff", [issueSet], deps)).rejects.toThrow();
+  await expect(runArbitrator(profile, "diff", [issueSet], [], deps)).rejects.toThrow();
 });

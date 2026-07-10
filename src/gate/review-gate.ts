@@ -155,7 +155,7 @@ export async function runReviewGate(
     );
     if (matrix.aiReview === "needs_arbitration") {
       const profiles = deps.reviewers;
-      const mainDevProfile = profiles?.mainDev ?? profiles?.[Object.keys(profiles ?? {})[0]] ?? reviewerProfile;
+      const mainDevProfile = profiles?.mainDev ?? profiles?.[Object.keys(profiles ?? {})[0]];
       const runArb =
         deps.runArbitrator ??
         ((profile, d, issues, acceptance, s, maxRetrySteps, maxTokenCost) =>

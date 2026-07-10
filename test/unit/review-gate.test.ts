@@ -156,6 +156,7 @@ test("matrix disagreement triggers arbitrator and uses its final verdict", async
   const reviewers: Record<string, ModelProfile> = {
     a: reviewerProfile,
     b: { ...reviewerProfile, model: "b-model" },
+    mainDev: reviewerProfile,
   };
   const issueSets = [
     {
