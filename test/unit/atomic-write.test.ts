@@ -1,3 +1,4 @@
+import { test, expect } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";

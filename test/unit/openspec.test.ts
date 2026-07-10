@@ -1,3 +1,4 @@
+import { test, expect } from "bun:test";
 import { parseOpenSpec, lintOpenSpec } from "../../src/openspec/parser";
 
 const sample = `---

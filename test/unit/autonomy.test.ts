@@ -1,3 +1,4 @@
+import { test, expect } from "bun:test";
 import { shouldPause } from "../../src/policy/autonomy";
 
 test("full autonomy skips after_brainstorm when no open questions", () => {

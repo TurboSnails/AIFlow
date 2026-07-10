@@ -1,3 +1,4 @@
+import { test, expect } from "bun:test";
 import { runReviewMatrix } from "../../src/review/matrix";
 import type { ModelProfile } from "../../src/config/schema";
 

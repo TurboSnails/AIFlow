@@ -1,3 +1,4 @@
+import { test, expect } from "bun:test";
 import { runArbitrator } from "../../src/review/arbitrator";
 import type { ModelProfile } from "../../src/config/schema";
 import type { ReviewOutput } from "../../src/gate/review-schema";
