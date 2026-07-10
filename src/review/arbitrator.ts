@@ -4,6 +4,7 @@ import type { ModelProfile } from "../config/schema";
 
 export interface ArbitratorDeps {
   callLlm: typeof callLlm;
+  stage?: string;
 }
 
 export async function runArbitrator(
@@ -23,7 +24,8 @@ export async function runArbitrator(
     "Reviewer issues:",
     JSON.stringify(issueSets),
   ].join("\n");
-  const result = await deps.callLlm({ profile, prompt, jsonMode: true });
+  const stage = deps.stage ?? "unknown";
+  const result = await deps.callLlm({ profile, prompt, jsonMode: true, stage });
   const parsed = ArbitrationOutputSchema.parse(JSON.parse(result.text));
   return parsed;
 }

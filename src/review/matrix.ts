@@ -5,7 +5,8 @@ import { buildReviewPrompt } from "../gate/review-gate";
 export interface ReviewMatrixDeps {
   callReviewer: (
     profile: ModelProfile,
-    prompt: string
+    prompt: string,
+    stage?: string
   ) => Promise<{
     data: unknown;
     usage: { inTok: number; outTok: number; costUsd: number };
@@ -27,7 +28,8 @@ export async function runReviewMatrix(
   _cwd: string,
   diff: string,
   acceptance: string[],
-  deps: ReviewMatrixDeps
+  deps: ReviewMatrixDeps,
+  stage = "unknown"
 ): Promise<ReviewMatrixResult> {
   const emptyResult = (
     aiReview: ReviewMatrixResult["aiReview"]
@@ -64,7 +66,7 @@ export async function runReviewMatrix(
             usage: { inTok: 0, outTok: 0, costUsd: 0 },
           };
         }
-        const { data, usage: callUsage } = await deps.callReviewer(profile, prompt);
+        const { data, usage: callUsage } = await deps.callReviewer(profile, prompt, stage);
         const parsed = ReviewOutputSchema.safeParse(data);
         if (!parsed.success) {
           return {
