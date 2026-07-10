@@ -55,6 +55,14 @@ export interface GateAnsweredAiflowEvent {
   action: "approve" | "reject";
 }
 
+export interface GateWaitingAiflowEvent {
+  ts: string;
+  type: "gate_waiting";
+  gate: "unresolved_questions";
+  stage: string;
+  questions: string[];
+}
+
 export interface WorktreeAiflowEvent {
   ts: string;
   type: "worktree";

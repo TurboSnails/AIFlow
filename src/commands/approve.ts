@@ -1,12 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { listRunIdsByMtimeDesc } from "../runs/store";
-import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
+import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { runPipelineOnce, type EngineDeps } from "../engine/engine";
 import { writeStateAtomic, type EngineState } from "../engine/state";
 import { appendEvent } from "../events/events";
 import { writeGateAnswer } from "../gate-answer/answer";
 import { assertCleanIfAutoClean } from "./dirty-guard";
+import { callLlm } from "../llm/client";
+import { resolveOpenQuestions, readSpecBoard } from "../specboard/specboard";
+import type { SpecBoard } from "../specboard/types";
+import type { ModelProfile, ProjectConfig } from "../config/schema";
 
 export interface ApproveResult {
   status: "resumed" | "no_runs" | "missing_run_dir" | "no_waiting_stage" | "ambiguous_stage" | "stage_not_waiting";
@@ -15,10 +20,51 @@ export interface ApproveResult {
   runId?: string;
 }
 
+const ResolutionsSchema = z.object({
+  resolutions: z.array(
+    z.object({
+      id: z.string(),
+      resolution: z.string(),
+    })
+  ),
+});
+
+async function resolveOpenQuestionsWithMainDev(
+  runDir: string,
+  board: SpecBoard,
+  mainDevProfile: ModelProfile,
+  callLlmFn: typeof callLlm = callLlm
+): Promise<void> {
+  const prompt = `You are the main-dev. Resolve the following open questions as JSON: { "resolutions": [{ "id": "...", "resolution": "..." }] }.\n${JSON.stringify(board.open_questions)}`;
+  const result = await callLlmFn({ profile: mainDevProfile, prompt, jsonMode: true });
+  const data = ResolutionsSchema.parse(JSON.parse(result.text));
+  for (const r of data.resolutions) {
+    resolveOpenQuestions(runDir, [r.id], r.resolution, "main_dev");
+  }
+}
+
+function loadProjectConfigWithDefaults(cwd: string): ProjectConfig {
+  const path = join(cwd, ".aiflow", "config", "project.yaml");
+  if (existsSync(path)) {
+    return loadProjectConfig(path);
+  }
+  return { max_drift_files: 50, on_unresolved: "ask_human", dashboard: { port: 3000, host: "127.0.0.1" } };
+}
+
+function selectMainDevProfile(profiles: Record<string, ModelProfile>): ModelProfile {
+  const mainDev = profiles["main-dev"] ?? profiles["mainDev"];
+  if (mainDev) return mainDev;
+  const keys = Object.keys(profiles);
+  if (keys.length === 0) {
+    throw new Error("No model profiles configured");
+  }
+  return profiles[keys[0]];
+}
+
 export async function runApprove(
   cwd: string,
   opts: { runId?: string; stage?: string },
-  deps?: EngineDeps,
+  deps?: EngineDeps & { callLlm?: typeof callLlm },
   signal?: AbortSignal,
   isCleanFn?: (cwd: string) => Promise<boolean>
 ): Promise<ApproveResult> {
@@ -30,7 +76,7 @@ export async function runApprove(
     return { status: "missing_run_dir", runId, message: `Run directory ${runDir} exists but has no state.json` };
   }
 
-  const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
+  let state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const waitingStages = state.stages.filter((s) => s.status === "waiting_human");
 
   let targetIndex: number;
@@ -54,31 +100,51 @@ export async function runApprove(
 
   await assertCleanIfAutoClean(cwd, pipelineConfig, state.pipeline, isCleanFn);
 
+  const projectConfig = loadProjectConfigWithDefaults(cwd);
+  const board = readSpecBoard(runDir);
   const stageId = state.stages[targetIndex].id;
   const stageConfig = pipelineConfig.stages.find((s) => s.id === stageId);
-  if (!stageConfig || stageConfig.type !== "human_gate") {
-    throw new Error(`Stage "${stageId}" is not a human_gate stage`);
+  if (!stageConfig) {
+    throw new Error(`Stage "${stageId}" not found in pipeline`);
   }
 
   const answeredAt = new Date().toISOString();
-  writeGateAnswer(runDir, {
-    stage: stageId,
-    prompt: stageConfig.prompt,
-    status: "answered",
-    answered_at: answeredAt,
-    action: "approve",
-    reason: null,
-  });
-  appendEvent(runDir, {
-    ts: answeredAt,
-    type: "gate_answered",
-    stage: stageId,
-    by: "cli",
-    action: "approve",
-  });
 
-  // Keep state.json untouched; the runner consumes gate-answer.json on resume
-  // and turns the waiting_human stage into done.
+  if (stageConfig.type !== "human_gate") {
+    if (board.open_questions.length > 0) {
+      const effectiveOnUnresolved =
+        stageConfig.type === "brainstorm" && stageConfig.on_unresolved
+          ? stageConfig.on_unresolved
+          : pipelineConfig.on_unresolved ?? projectConfig.on_unresolved;
+      if (effectiveOnUnresolved === "main_dev_decides") {
+        const mainDevProfile = selectMainDevProfile(modelsConfig.profiles);
+        await resolveOpenQuestionsWithMainDev(runDir, board, mainDevProfile, deps?.callLlm);
+      } else if (effectiveOnUnresolved === "ask_human") {
+        throw new Error(`Stage ${stageId} has unresolved open questions; resolve them before approving.`);
+      }
+    }
+    state = {
+      ...state,
+      stages: state.stages.map((s, idx) => (idx === targetIndex ? { ...s, status: "done", reason: undefined } : s)),
+    };
+  } else {
+    writeGateAnswer(runDir, {
+      stage: stageId,
+      prompt: stageConfig.prompt,
+      status: "answered",
+      answered_at: answeredAt,
+      action: "approve",
+      reason: null,
+    });
+    appendEvent(runDir, {
+      ts: answeredAt,
+      type: "gate_answered",
+      stage: stageId,
+      by: "cli",
+      action: "approve",
+    });
+  }
+
   writeStateAtomic(runDir, state);
 
   const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, signal, { resume: true });

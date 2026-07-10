@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeStateAtomic, readState, type EngineState, type StageState, type StageStatus, type StageStopReason } from "./state";
 import { readEvents, appendEvent } from "../events/events";
+import type { GateWaitingAiflowEvent } from "../events/new-events";
 import { runRalphLoop as realRunRalphLoop } from "../runners/ralph-loop";
 import { runBrainstormStage } from "../runners/brainstorm";
 import { runSpecStage } from "../runners/spec";
@@ -408,6 +409,7 @@ export async function runPipelineOnce(
       const effectiveAutonomy: Autonomy = stage.autonomy ?? pipeline.autonomy ?? "gated";
       const effectiveOnUnresolved: "ask_human" | "main_dev_decides" =
         (stage.type === "ralph_loop" ? (stage as RalphLoopStageConfig).on_unresolved : undefined) ??
+        (stage.type === "brainstorm" ? (stage as BrainstormStageConfig).on_unresolved : undefined) ??
         pipeline.on_unresolved ??
         opts.on_unresolved ??
         "ask_human";
@@ -425,11 +427,25 @@ export async function runPipelineOnce(
         writeStateAtomic(runDir, state);
         break;
       }
-      if (shouldPause(effectiveAutonomy, "unresolved_questions", policyCtx) === "pause") {
+      if (stage.type !== "human_gate" && shouldPause(effectiveAutonomy, "unresolved_questions", policyCtx) === "pause") {
+        const now = nowFn();
+        const nextHumanGateIndex = pipeline.stages.findIndex(
+          (s, idx) => idx > i && s.type === "human_gate"
+        );
+        const targetIndex = nextHumanGateIndex === -1 ? i : nextHumanGateIndex;
         state = {
           ...state,
-          stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s)),
+          stages: state.stages.map((s, idx) =>
+            idx === targetIndex ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s
+          ),
         };
+        appendEvent(runDir, {
+          ts: now.toISOString(),
+          type: "gate_waiting",
+          gate: "unresolved_questions",
+          stage: pipeline.stages[targetIndex].id,
+          questions: board.open_questions.map((q) => q.id),
+        } as GateWaitingAiflowEvent);
         writeStateAtomic(runDir, state);
         break;
       }

@@ -5,6 +5,7 @@ import type {
   DebateRoundAiflowEvent,
   DebateEndAiflowEvent,
   GateAnsweredAiflowEvent,
+  GateWaitingAiflowEvent,
   LlmRetryAiflowEvent,
   MergeConflictUnarbitrableAiflowEvent,
   ReviewArbitratedAiflowEvent,
@@ -146,6 +147,7 @@ export type AiflowEvent =
   | ReviewVerdictAiflowEvent
   | ReviewArbitratedAiflowEvent
   | GateAnsweredAiflowEvent
+  | GateWaitingAiflowEvent
   | WorktreeAiflowEvent
   | MergeConflictUnarbitrableAiflowEvent
   | StorySuspendedAiflowEvent

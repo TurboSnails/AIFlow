@@ -32,6 +32,32 @@ function setupRun(stages: Array<{ id: string; status: string; entered_at?: strin
   return { cwd, runId };
 }
 
+function setupRunWithPipeline(
+  pipelineYaml: string,
+  stages: Array<{ id: string; status: string; entered_at?: string }>
+): { cwd: string; runId: string; runDir: string } {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-approve-test-"));
+  const runId = "20260706_000000_abc123";
+  const runDir = join(cwd, ".aiflow", "runs", runId);
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
+  writeFileSync(
+    join(cwd, ".aiflow", "config", "models.yaml"),
+    `profiles:\n  main-dev:\n    channel: opencode\n    provider: opencode\n    model: x\n`
+  );
+  writeFileSync(join(cwd, ".aiflow", "config", "pipelines", "test-pipeline.yaml"), pipelineYaml);
+  writeFileSync(
+    join(runDir, "state.json"),
+    JSON.stringify({
+      run_id: runId,
+      pipeline: "test-pipeline",
+      stages,
+      cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    })
+  );
+  return { cwd, runId, runDir };
+}
+
 test("approves the sole waiting_human stage and continues the pipeline", async () => {
   const { cwd, runId } = setupRun([{ id: "confirm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]);
   try {
@@ -195,6 +221,125 @@ test("--stage writes gate-answer.json only for the named stage", async () => {
     const answer = readGateAnswer(runDir);
     expect(answer!.stage).toBe("confirm-a");
     expect(answer!.action).toBe("approve");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approves a brainstorm paused for unresolved questions when the next stage is a human_gate", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+  - id: gate
+    type: human_gate
+    prompt: "ok?"
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [
+      { id: "brainstorm", status: "done" },
+      { id: "gate", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+    ]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    const result = await runApprove(cwd, { runId }, {
+      runners: {
+        human_gate: async () => ({ result: "pass" }),
+      },
+    });
+    expect(result.status).toBe("resumed");
+    expect(result.state!.stages[1].status).toBe("done");
+    const events = readEvents(runDir);
+    const answeredEvent = events.find((e) => e.type === "gate_answered");
+    expect(answeredEvent).toBeDefined();
+    expect((answeredEvent as any).stage).toBe("gate");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ask_human rejects approval of a non-gate stage with unresolved questions", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    await expect(runApprove(cwd, { runId })).rejects.toThrow(/unresolved open questions/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("main_dev_decides resolves open questions when approving a non-gate stage", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    const result = await runApprove(cwd, { runId }, {
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved by main dev" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
+      }),
+      runners: {},
+    });
+    expect(result.status).toBe("resumed");
+    expect(result.state!.stages[0].status).toBe("done");
+    const board = JSON.parse(readFileSync(join(runDir, "specboard.json"), "utf-8"));
+    expect(board.open_questions).toHaveLength(0);
+    expect(board.decisions).toHaveLength(1);
+    expect(board.decisions[0].resolution).toBe("resolved by main dev");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

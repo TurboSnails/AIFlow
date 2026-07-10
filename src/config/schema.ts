@@ -77,6 +77,7 @@ export const BrainstormStageSchema = z.object({
   id: z.string(),
   type: z.literal("brainstorm"),
   autonomy: AutonomySchema.optional(),
+  on_unresolved: z.enum(["ask_human", "main_dev_decides"]).default("ask_human"),
   models: z.array(z.string()).min(2),
   mode: z.enum(["independent", "debate"]).default("independent"),
   debate_rounds: z.number().int().positive().default(2),

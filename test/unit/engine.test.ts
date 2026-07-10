@@ -623,6 +623,7 @@ describe("runPipelineOnce AutonomyPolicy integration", () => {
       {
         id: "ideate",
         type: "brainstorm",
+        on_unresolved: "ask_human",
         models: ["main-dev", "reviewer"],
         synthesizer: "main-dev",
       },

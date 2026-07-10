@@ -18,6 +18,7 @@ const profiles: Record<string, ModelProfile> = {
 const baseStage: BrainstormStageConfig = {
   id: "ideate",
   type: "brainstorm",
+  on_unresolved: "ask_human",
   models: ["a", "b"],
   mode: "independent",
   debate_rounds: 2,

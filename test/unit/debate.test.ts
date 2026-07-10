@@ -33,6 +33,7 @@ test("debate converges in two rounds", async () => {
     {
       id: "b",
       type: "brainstorm",
+      on_unresolved: "ask_human",
       models: ["a", "b"],
       mode: "debate",
       debate_rounds: 2,
@@ -66,6 +67,7 @@ test("debate stops early when disputes diverge", async () => {
     {
       id: "b",
       type: "brainstorm",
+      on_unresolved: "ask_human",
       models: ["a", "b"],
       mode: "debate",
       debate_rounds: 3,
@@ -96,6 +98,7 @@ test("invalid moderator output fails the stage instead of reporting convergence"
       {
         id: "b",
         type: "brainstorm",
+        on_unresolved: "ask_human",
         models: ["a", "b"],
         mode: "debate",
         debate_rounds: 2,
@@ -147,6 +150,7 @@ test("round 2 prompt excludes a model's own prior proposal", async () => {
     {
       id: "b",
       type: "brainstorm",
+      on_unresolved: "ask_human",
       models: ["a", "b"],
       mode: "debate",
       debate_rounds: 2,
