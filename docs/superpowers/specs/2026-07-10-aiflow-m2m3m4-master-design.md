@@ -229,7 +229,6 @@ const ReviewGateConfigSchema = z.object({
   ai_review: z.object({
     enabled: z.boolean(),
     reviewers: z.array(z.string()).min(1).max(2),
-    use_agent: z.boolean().default(false),
     fail_on: z.array(z.enum(["blocker", "major", "minor", "nit"])),
     fail_threshold: z.record(z.string(), z.number()).optional(),
     strict: z.boolean().default(false),

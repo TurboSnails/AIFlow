@@ -39,7 +39,7 @@ test("excludes author from reviewers", async () => {
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["rev"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "rev",
     "/tmp",
@@ -53,7 +53,7 @@ test("excludes author from reviewers", async () => {
 test("single non-author reviewer with no issues passes", async () => {
   const deps = makeDeps({ m: { issues: [] } });
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["rev"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
@@ -72,7 +72,7 @@ test("single non-author reviewer with issues fails", async () => {
   const issue = { severity: "blocker", file: "f.ts", line: 1, title: "t", detail: "d", suggestion: "s" };
   const deps = makeDeps({ m: { issues: [issue] } });
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["rev"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
@@ -235,7 +235,7 @@ test("invalid reviewer output is treated as fail and usage is still counted", as
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["rev"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
