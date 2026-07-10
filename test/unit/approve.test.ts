@@ -226,7 +226,7 @@ test("--stage writes gate-answer.json only for the named stage", async () => {
   }
 });
 
-test("approves a brainstorm paused for unresolved questions when the next stage is a human_gate", async () => {
+test("unresolved questions pause at the brainstorm stage, not a later human_gate", async () => {
   const pipelineYaml = `name: test-pipeline
 autonomy: full
 stages:
@@ -241,8 +241,49 @@ stages:
   const { cwd, runId, runDir } = setupRunWithPipeline(
     pipelineYaml,
     [
-      { id: "brainstorm", status: "done" },
-      { id: "gate", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+      { id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+      { id: "gate", status: "pending" },
+    ]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    await expect(runApprove(cwd, { runId })).rejects.toThrow(/unresolved open questions/);
+    const state = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(state.stages[0].status).toBe("waiting_human");
+    expect(state.stages[1].status).toBe("pending");
+    expect(existsSync(join(runDir, "gate-answer.json"))).toBe(false);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("main_dev_decides resolves open questions and runs the downstream human_gate", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+  - id: gate
+    type: human_gate
+    prompt: "ok?"
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [
+      { id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+      { id: "gate", status: "pending" },
     ]
   );
   writeFileSync(
@@ -257,16 +298,23 @@ stages:
   );
   try {
     const result = await runApprove(cwd, { runId }, {
-      runners: {
-        human_gate: async () => ({ result: "pass" }),
-      },
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved by main dev" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
+      }),
+      runners: {},
     });
     expect(result.status).toBe("resumed");
-    expect(result.state!.stages[1].status).toBe("done");
-    const events = readEvents(runDir);
-    const answeredEvent = events.find((e) => e.type === "gate_answered");
-    expect(answeredEvent).toBeDefined();
-    expect((answeredEvent as any).stage).toBe("gate");
+    expect(result.state!.stages[0].status).toBe("done");
+    expect(result.state!.stages[1].status).toBe("waiting_human");
+    const answer = readGateAnswer(runDir);
+    expect(answer).not.toBeUndefined();
+    expect(answer!.stage).toBe("gate");
+    expect(answer!.status).toBe("waiting");
+    const board = JSON.parse(readFileSync(join(runDir, "specboard.json"), "utf-8"));
+    expect(board.open_questions).toHaveLength(0);
+    expect(board.decisions).toHaveLength(1);
+    expect(board.decisions[0].resolution).toBe("resolved by main dev");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -280,10 +328,16 @@ stages:
     type: brainstorm
     models: [a, b]
     synthesizer: main-dev
+  - id: gate
+    type: human_gate
+    prompt: "ok?"
 `;
   const { cwd, runId, runDir } = setupRunWithPipeline(
     pipelineYaml,
-    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+    [
+      { id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" },
+      { id: "gate", status: "pending" },
+    ]
   );
   writeFileSync(
     join(runDir, "specboard.json"),
@@ -297,6 +351,8 @@ stages:
   );
   try {
     await expect(runApprove(cwd, { runId })).rejects.toThrow(/unresolved open questions/);
+    const state = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(state.stages[1].status).toBe("pending");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

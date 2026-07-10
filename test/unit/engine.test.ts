@@ -788,6 +788,54 @@ test("open questions on the SpecBoard pause the stage when on_unresolved is ask_
   }
 });
 
+test("open questions pause at the source stage and do not run a downstream human_gate", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-unresolved-source-"));
+  try {
+    const pipeline: PipelineConfig = {
+      name: "brainstorm-gate",
+      autonomy: "full",
+      on_unresolved: "ask_human",
+      stages: [
+        {
+          id: "ideate",
+          type: "brainstorm",
+          models: ["main-dev", "reviewer"],
+          synthesizer: "main-dev",
+        },
+        {
+          id: "confirm",
+          type: "human_gate",
+          prompt: "ok?",
+        },
+      ],
+    };
+    const brainstormRunner = mock(async () => {
+      writeSpecBoard(runDir, {
+        requirement: "Add offline cache",
+        artifacts: {},
+        open_questions: [{ id: "Q1", topic: "Storage backend", positions: {} }],
+        decisions: [],
+        review_matrix: {},
+      });
+      return { result: "pass" as const, usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+    });
+    const gateRunner = mock(async () => ({ result: "pass" as const }));
+    const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, {
+      runners: { brainstorm: brainstormRunner, human_gate: gateRunner },
+    });
+
+    expect(state.stages[0].status).toBe("waiting_human");
+    expect(state.stages[0].reason).toBe("autonomy_pause");
+    expect(state.stages[1].status).toBe("pending");
+    expect(brainstormRunner).toHaveBeenCalledTimes(1);
+    expect(gateRunner).not.toHaveBeenCalled();
+    const events = readEvents(runDir);
+    expect(events.some((e) => e.type === "gate_answered")).toBe(false);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("engine persists isolation and worktree in state.json and runs shell stage", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-engine-shell-cwd-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-shell-"));

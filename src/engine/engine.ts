@@ -429,21 +429,17 @@ export async function runPipelineOnce(
       }
       if (stage.type !== "human_gate" && shouldPause(effectiveAutonomy, "unresolved_questions", policyCtx) === "pause") {
         const now = nowFn();
-        const nextHumanGateIndex = pipeline.stages.findIndex(
-          (s, idx) => idx > i && s.type === "human_gate"
-        );
-        const targetIndex = nextHumanGateIndex === -1 ? i : nextHumanGateIndex;
         state = {
           ...state,
           stages: state.stages.map((s, idx) =>
-            idx === targetIndex ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s
+            idx === i ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s
           ),
         };
         appendEvent(runDir, {
           ts: now.toISOString(),
           type: "gate_waiting",
           gate: "unresolved_questions",
-          stage: pipeline.stages[targetIndex].id,
+          stage: pipeline.stages[i].id,
           questions: board.open_questions.map((q) => q.id),
         } as GateWaitingAiflowEvent);
         writeStateAtomic(runDir, state);
