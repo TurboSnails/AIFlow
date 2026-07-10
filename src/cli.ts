@@ -42,29 +42,25 @@ async function withRunLock<T>(
 
 program
   .command("doctor")
-  .description("Check environment: OpenCode, reviewer API key, git status")
+  .description("Check environment: OpenCode, configs, profiles, git, stale worktrees")
   .action(async () => {
     const { runDoctorChecks } = await import("./commands/doctor");
-    const { loadModelsConfig } = await import("./config/loader");
-    const { join } = await import("node:path");
 
-    let reviewerProfile;
-    try {
-      const config = loadModelsConfig(join(process.cwd(), ".aiflow", "config", "models.yaml"));
-      reviewerProfile = config.profiles["reviewer"];
-    } catch {
-      reviewerProfile = undefined;
-    }
-
-    const report = await runDoctorChecks(process.cwd(), reviewerProfile);
+    const report = await runDoctorChecks(process.cwd(), undefined);
     console.log(`OpenCode version: ${report.openCodeVersion ?? "NOT FOUND"}`);
     console.log(`Git repo: ${report.gitOk ? "ok" : "NOT a git repository"}`);
+    console.log(`Config valid: ${report.configOk ? "ok" : "INVALID"}${report.configError ? ` (${report.configError})` : ""}`);
     console.log(`Reviewer API key present: ${report.reviewerKeyPresent}`);
     console.log(`Reviewer reachable: ${report.reviewerReachable ?? "skipped (no key)"}`);
     if (report.reviewerError) console.log(`Reviewer error: ${report.reviewerError}`);
     for (const warning of report.pricingWarnings) console.log(`Pricing warning: ${warning}`);
+    for (const ps of report.profileStatuses) {
+      const status = ps.reachable === true ? "reachable" : ps.reachable === false ? `unreachable (${ps.error})` : "skipped (no key)";
+      console.log(`Profile ${ps.name}: ${status}`);
+    }
+    console.log(`Stale worktrees: ${report.staleWorktrees}`);
 
-    const fatal = !report.openCodeVersion || !report.gitOk;
+    const fatal = !report.openCodeVersion || !report.gitOk || !report.configOk;
     process.exitCode = fatal ? 1 : 0;
   });
 
