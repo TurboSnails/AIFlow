@@ -140,7 +140,11 @@ export async function runCommand(
   } finally {
     if (worktreeCtx) {
       const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
-      await removeWorktree(worktreeCtx);
+      try {
+        await removeWorktree(worktreeCtx);
+      } catch {
+        // Best-effort cleanup: do not mask the pipeline outcome or original error.
+      }
     }
   }
 }
