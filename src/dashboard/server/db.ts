@@ -43,22 +43,24 @@ export function ingestEvents(db: Database, runDir: string): void {
   const runId = basename(runDir);
   const eventsPath = join(runDir, "events.jsonl");
   let text: string;
+  let size: number;
   try {
     text = readFileSync(eventsPath, "utf-8");
+    size = statSync(eventsPath).size;
   } catch {
     return;
   }
   const lines = text.split("\n").filter((line) => line.trim() !== "");
-  ingestLines(db, runId, lines);
+  ingestLines(db, runId, lines, size);
 }
 
-function ingestLines(db: Database, runId: string, lines: string[]): void {
-  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>, cursorRunId: string, cursorOffset: number) => {
+function ingestLines(db: Database, runId: string, lines: string[], cursorOffset: number): void {
+  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>, cursorRunId: string, offset: number) => {
     const stmt = db.prepare("INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)");
     for (const row of rows) {
       stmt.run(cursorRunId, row.ts, row.type, row.payload);
     }
-    setCursor(db, cursorRunId, cursorOffset);
+    setCursor(db, cursorRunId, offset);
   });
   const rows: Array<{ ts: string; type: string; payload: string }> = [];
   for (const line of lines) {
@@ -66,9 +68,7 @@ function ingestLines(db: Database, runId: string, lines: string[]): void {
     if (!parsed) continue;
     rows.push(parsed);
   }
-  if (rows.length > 0) {
-    insert(rows, runId, 0);
-  }
+  insert(rows, runId, cursorOffset);
 }
 
 function parseEventLine(line: string): { ts: string; type: string; payload: string } | null {

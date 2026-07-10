@@ -48,24 +48,15 @@ test("tailRun does not duplicate events when called repeatedly", () => {
   expect(getEventsForRun(db, runId).length).toBe(1);
 });
 
-test("collector ingests new events on file change", async () => {
-  const runsRoot = mkdtempSync(join(tmpdir(), "dash-runs-"));
-  const runDir = join(runsRoot, "r1");
-  mkdirSync(runDir);
-  writeFileSync(join(runDir, "events.jsonl"), "\n");
-  const dbPath = join(runsRoot, "dashboard.sqlite");
-  const collector = startCollector(runsRoot, dbPath, { usePolling: true, interval: 20, awaitWriteFinish: false });
-
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  appendFileSync(join(runDir, "events.jsonl"), JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }) + "\n");
-  await new Promise((resolve) => setTimeout(resolve, 250));
-
-  const db = createDb(dbPath);
-  const events = getEventsForRun(db, "r1");
-  expect(events.length).toBe(1);
-  expect(events[0].type).toBe("stage_start");
-
-  await collector.close();
+test("ingestEvents then tailRun does not duplicate events", () => {
+  const db = createDb(":memory:");
+  const runDir = mkdtempSync(join(tmpdir(), "dash-"));
+  const runId = basename(runDir);
+  const path = join(runDir, "events.jsonl");
+  writeFileSync(path, JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }) + "\n");
+  ingestEvents(db, runDir);
+  tailRun(db, runDir);
+  expect(getEventsForRun(db, runId).length).toBe(1);
 });
 
 test("tailRun updates cursor when file has not grown", () => {
@@ -98,6 +89,26 @@ test("ignores malformed event lines", () => {
   const events = getEventsForRun(db, runId);
   expect(events.length).toBe(2);
   expect(events.map((e) => e.type)).toEqual(["stage_start", "stage_done"]);
+});
+
+test("collector ingests new events on file change", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "dash-runs-"));
+  const runDir = join(runsRoot, "r1");
+  mkdirSync(runDir);
+  writeFileSync(join(runDir, "events.jsonl"), "\n");
+  const dbPath = join(runsRoot, "dashboard.sqlite");
+  const collector = startCollector(runsRoot, dbPath, { usePolling: true, interval: 20, awaitWriteFinish: false });
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  appendFileSync(join(runDir, "events.jsonl"), JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }) + "\n");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  const db = createDb(dbPath);
+  const events = getEventsForRun(db, "r1");
+  expect(events.length).toBe(1);
+  expect(events[0].type).toBe("stage_start");
+
+  await collector.close();
 });
 
 function basename(p: string): string {
