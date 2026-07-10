@@ -1,9 +1,13 @@
 import { test, expect, mock } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { runSpecStage } from "../../src/runners/spec";
 import { createBudgetTracker } from "../../src/gate/budget";
+import { readEvents } from "../../src/events/events";
+import { parseOpenSpec, lintOpenSpec } from "../../src/openspec/parser";
+import { registerArtifact } from "../../src/specboard/specboard";
 import type { SpecStageConfig, ModelProfile } from "../../src/config/schema";
 import type { StageState } from "../../src/engine/state";
 
@@ -11,11 +15,24 @@ const profiles: Record<string, ModelProfile> = { "main-dev": { channel: "opencod
 const stageConfig: SpecStageConfig = { id: "spec", type: "spec", model: "main-dev", output: "spec.md" };
 const pendingStageState: StageState = { id: "spec", status: "pending" };
 
+const validSpec = `---
+spec_id: test-spec
+version: 1
+branch: main
+---
+<task id="t1" priority="1">
+## Task 1
+
+Acceptance:
+- [ ] It works
+</task>
+`;
+
 test("agent succeeds and writes spec.md: result is pass", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-test-cwd-"));
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-test-run-"));
   try {
-    writeFileSync(join(cwd, "spec.md"), "# Spec\nwritten by the agent");
+    writeFileSync(join(cwd, "spec.md"), validSpec);
     const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } }));
 
     const outcome = await runSpecStage(stageConfig, pendingStageState, profiles, cwd, runDir, () => new Date(), undefined, {
@@ -53,7 +70,7 @@ test("agent writes a non-default output filename: result is pass", async () => {
   try {
     const customStageConfig: SpecStageConfig = { id: "spec", type: "spec", model: "main-dev", output: "design.md" };
     // Deliberately do NOT write spec.md — only the configured output file.
-    writeFileSync(join(cwd, "design.md"), "# Design\nwritten by the agent");
+    writeFileSync(join(cwd, "design.md"), validSpec);
     const runAgentTask = mock(async (task: { prompt: string }) => {
       expect(task.prompt).toContain("design.md");
       expect(task.prompt).not.toContain("spec.md");
@@ -115,5 +132,81 @@ test("returns paused/budget_exceeded without writing the output file when the ag
   } finally {
     rmSync(runDir, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("valid spec is parsed, linted, hashed and registered as artifact", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-valid-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-valid-run-"));
+  try {
+    writeFileSync(join(cwd, "spec.md"), validSpec);
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } }));
+    const registerArtifactMock = mock(registerArtifact);
+    const expectedHash = createHash("sha256").update(readFileSync(join(cwd, "spec.md"))).digest("hex");
+
+    const outcome = await runSpecStage(stageConfig, pendingStageState, profiles, cwd, runDir, () => new Date(), undefined, {
+      runAgentTask,
+      registerArtifact: registerArtifactMock,
+    });
+
+    expect(outcome.result).toBe("pass");
+    expect(registerArtifactMock).toHaveBeenCalledWith(runDir, "spec", "spec.md");
+    const events = readEvents(runDir);
+    const specEvent = events.find((e) => e.type === "spec_result");
+    expect(specEvent).toBeDefined();
+    expect(specEvent?.type === "spec_result" && specEvent.spec_hash).toBe(expectedHash);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("invalid frontmatter fails parsing and fails the stage", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-parse-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-parse-run-"));
+  try {
+    writeFileSync(join(cwd, "spec.md"), "No frontmatter here");
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } }));
+    const parseOpenSpecMock = mock(parseOpenSpec);
+    parseOpenSpecMock.mockImplementation(() => ({ success: false, error: "missing frontmatter" }));
+    const registerArtifactMock = mock(registerArtifact);
+
+    const outcome = await runSpecStage(stageConfig, pendingStageState, profiles, cwd, runDir, () => new Date(), undefined, {
+      runAgentTask,
+      parseOpenSpec: parseOpenSpecMock,
+      registerArtifact: registerArtifactMock,
+    });
+
+    expect(outcome.result).toBe("fail");
+    expect(parseOpenSpecMock).toHaveBeenCalled();
+    expect(registerArtifactMock).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("lint errors fail the stage", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-spec-lint-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-spec-lint-run-"));
+  try {
+    writeFileSync(join(cwd, "spec.md"), validSpec);
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } }));
+    const lintOpenSpecMock = mock(lintOpenSpec);
+    lintOpenSpecMock.mockImplementation(() => ["task t1 missing acceptance"]);
+    const registerArtifactMock = mock(registerArtifact);
+
+    const outcome = await runSpecStage(stageConfig, pendingStageState, profiles, cwd, runDir, () => new Date(), undefined, {
+      runAgentTask,
+      lintOpenSpec: lintOpenSpecMock,
+      registerArtifact: registerArtifactMock,
+    });
+
+    expect(outcome.result).toBe("fail");
+    expect(lintOpenSpecMock).toHaveBeenCalled();
+    expect(registerArtifactMock).not.toHaveBeenCalled();
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
   }
 });

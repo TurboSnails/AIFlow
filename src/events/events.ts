@@ -85,6 +85,7 @@ export interface SpecResultAiflowEvent {
   type: "spec_result";
   stage: string;
   result: "pass" | "fail";
+  spec_hash?: string;
 }
 
 export interface PlanResultAiflowEvent {

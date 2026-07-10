@@ -62,8 +62,20 @@ const fakeCallLlm = async (opts: { prompt: string }) => ({
 });
 const fakeCallLlmFanOut = async (profiles: ModelProfile[]) =>
   profiles.map((profile) => ({ profile, ok: true, result: { text: "an idea", usage: { inTok: 1, outTok: 1, costUsd: 0 } } }));
+const validSpec = `---
+spec_id: test-spec
+version: 1
+branch: main
+---
+<task id="US-1" priority="1">
+## US-1
+
+Acceptance:
+- [ ] It works
+</task>
+`;
 const fakeRunAgentTaskWritingSpec = async (task: { cwd: string }) => {
-  writeFileSync(join(task.cwd, "spec.md"), "# Spec\nAcceptance: implement US-1");
+  writeFileSync(join(task.cwd, "spec.md"), validSpec);
   return { ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } };
 };
 
