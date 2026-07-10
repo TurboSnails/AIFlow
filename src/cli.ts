@@ -54,7 +54,7 @@ program
     console.log(`Reviewer reachable: ${report.reviewerReachable ?? "skipped (no key)"}`);
     if (report.reviewerError) console.log(`Reviewer error: ${report.reviewerError}`);
     for (const warning of report.pricingWarnings) console.log(`Pricing warning: ${warning}`);
-    for (const ps of report.profileStatuses) {
+    for (const ps of report.profileStatuses.filter((p) => p.name !== "reviewer")) {
       const status = ps.reachable === true ? "reachable" : ps.reachable === false ? `unreachable (${ps.error})` : "skipped (no key)";
       console.log(`Profile ${ps.name}: ${status}`);
     }

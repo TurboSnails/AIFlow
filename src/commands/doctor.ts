@@ -25,6 +25,7 @@ export interface DoctorDeps {
   loadModelsConfig: (path: string) => ModelsConfig;
   loadProjectConfig: (path: string) => ProjectConfig;
   listStaleWorktrees: (cwd: string, maxAgeMs: number) => Promise<WorktreeEntry[]>;
+  env: Record<string, string | undefined>;
 }
 
 export async function checkOpenCodeVersionReal(): Promise<string | null> {
@@ -53,6 +54,8 @@ export async function checkGitRepoReal(cwd: string): Promise<boolean> {
   }
 }
 
+const STALE_WORKTREE_AGE_MS = 7 * 86400_000;
+
 const defaultDeps: DoctorDeps = {
   checkOpenCodeVersion: checkOpenCodeVersionReal,
   checkGitRepo: checkGitRepoReal,
@@ -60,10 +63,11 @@ const defaultDeps: DoctorDeps = {
   loadModelsConfig: realLoadModelsConfig,
   loadProjectConfig: realLoadProjectConfig,
   listStaleWorktrees: realListStaleWorktrees,
+  env: process.env,
 };
 
-function keyPresent(profile: ModelProfile): boolean {
-  return Boolean(profile.api_key_env && process.env[profile.api_key_env]);
+function keyPresent(profile: ModelProfile, env: Record<string, string | undefined>): boolean {
+  return Boolean(profile.api_key_env && env[profile.api_key_env]);
 }
 
 export async function runDoctorChecks(
@@ -98,7 +102,7 @@ export async function runDoctorChecks(
             `Profile "${name}" is missing one or both of input_cost_per_1m/output_cost_per_1m; spend will be under-counted in budget and cost reports (missing fields are treated as $0).`,
           );
         }
-        if (keyPresent(profile)) {
+        if (keyPresent(profile, d.env)) {
           try {
             await d.callReviewer(profile, 'Respond with only this JSON: {"summary":"pong","issues":[]}');
             profileStatuses.push({ name, reachable: true });
@@ -117,7 +121,7 @@ export async function runDoctorChecks(
   }
 
   const effectiveReviewer = reviewerProfile ?? modelsConfig?.profiles["reviewer"];
-  const reviewerKeyPresent = effectiveReviewer ? keyPresent(effectiveReviewer) : false;
+  const reviewerKeyPresent = effectiveReviewer ? keyPresent(effectiveReviewer, d.env) : false;
 
   let reviewerReachable: boolean | null = null;
   let reviewerError: string | undefined;
@@ -137,7 +141,7 @@ export async function runDoctorChecks(
     }
   }
 
-  const staleWorktrees = (await d.listStaleWorktrees(cwd, 7 * 86400_000)).length;
+  const staleWorktrees = (await d.listStaleWorktrees(cwd, STALE_WORKTREE_AGE_MS)).length;
 
   return {
     openCodeVersion,
