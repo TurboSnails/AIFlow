@@ -127,6 +127,64 @@ export function tailRun(db: Database, runDir: string, cursor?: number): { cursor
   return { cursor: nextCursor, ingested: rows.length };
 }
 
+export function getRuns(db: Database): Array<{ run_id: string; ts: string; status: string }> {
+  return db
+    .prepare(`
+      SELECT run_id, ts, type as status
+      FROM events e
+      WHERE id = (
+        SELECT id FROM events WHERE run_id = e.run_id ORDER BY ts DESC, id DESC LIMIT 1
+      )
+      ORDER BY ts DESC
+    `)
+    .all() as ReturnType<typeof getRuns>;
+}
+
+export function getStageEventsForRun(
+  db: Database,
+  runId: string,
+): Array<{ id: number; run_id: string; ts: string; type: string; payload: string }> {
+  return db
+    .prepare("SELECT id, run_id, ts, type, payload FROM events WHERE run_id = ? AND (type LIKE 'stage_%' OR type = 'human_gate') ORDER BY ts, id")
+    .all(runId) as ReturnType<typeof getStageEventsForRun>;
+}
+
+export function getCostForRun(
+  db: Database,
+  runId: string,
+): { total_in: number; total_out: number; total_usd: number; stages: Array<{ stage: string; in: number; out: number; usd: number }> } {
+  const rows = getEventsForRun(db, runId);
+  let total_in = 0;
+  let total_out = 0;
+  let total_usd = 0;
+  const stageMap = new Map<string, { in: number; out: number; usd: number }>();
+  for (const row of rows) {
+    if (row.type !== "llm_call") continue;
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.payload);
+    } catch {
+      continue;
+    }
+    const usage = payload.usage as Record<string, number> | undefined;
+    if (!usage) continue;
+    const inTok = usage.inTok ?? usage.in_tokens ?? 0;
+    const outTok = usage.outTok ?? usage.out_tokens ?? 0;
+    const cost = usage.costUsd ?? usage.cost_usd ?? 0;
+    total_in += inTok;
+    total_out += outTok;
+    total_usd += cost;
+    const stage = String(payload.stage ?? "unknown");
+    const existing = stageMap.get(stage) ?? { in: 0, out: 0, usd: 0 };
+    existing.in += inTok;
+    existing.out += outTok;
+    existing.usd += cost;
+    stageMap.set(stage, existing);
+  }
+  const stages = Array.from(stageMap.entries()).map(([stage, vals]) => ({ stage, ...vals }));
+  return { total_in, total_out, total_usd, stages };
+}
+
 export function getEventsForRun(
   db: Database,
   runId: string,
