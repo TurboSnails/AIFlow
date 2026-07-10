@@ -9,6 +9,7 @@ import type {
   MergeConflictUnarbitrableAiflowEvent,
   ReviewArbitratedAiflowEvent,
   ReviewVerdictAiflowEvent,
+  RunAbortedAiflowEvent,
   StageDoneAiflowEvent,
   StageStartAiflowEvent,
   StorySuspendedAiflowEvent,
@@ -148,7 +149,8 @@ export type AiflowEvent =
   | WorktreeAiflowEvent
   | MergeConflictUnarbitrableAiflowEvent
   | StorySuspendedAiflowEvent
-  | LlmRetryAiflowEvent;
+  | LlmRetryAiflowEvent
+  | RunAbortedAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");

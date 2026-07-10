@@ -77,6 +77,11 @@ export interface StorySuspendedAiflowEvent {
   reason: "fix_limit" | "stall" | "max_iterations" | "arbitration_escalation";
 }
 
+export interface RunAbortedAiflowEvent {
+  ts: string;
+  type: "run_aborted";
+}
+
 export interface LlmRetryAiflowEvent {
   ts: string;
   type: "llm_retry";

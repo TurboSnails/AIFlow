@@ -205,6 +205,24 @@ program
   });
 
 program
+  .command("abort")
+  .description("Abort a run, marking active/waiting/pending stages as aborted")
+  .option("--run-id <id>", "target a specific run (defaults to latest)")
+  .action(async (opts: { runId?: string }) => {
+    const { runAbort } = await import("./commands/abort");
+    await withRunLock(process.cwd(), opts.runId ?? "pending-abort", () => {
+      const result = runAbort(process.cwd(), opts);
+      if (result.status !== "aborted") {
+        console.error(result.status === "no_runs" ? "No runs found" : "Could not abort run");
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Run ${result.runId}: aborted`);
+      process.exitCode = 0;
+    });
+  });
+
+program
   .command("status")
   .description("Render the current run snapshot (read-only)")
   .option("--run-id <id>", "show a specific run (defaults to latest)")
