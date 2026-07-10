@@ -1,8 +1,15 @@
 import { callLlm, callLlmFanOut, type LlmCallResult } from "../llm/client";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { BrainstormStageConfig, ModelProfile } from "../config/schema";
 import type { BudgetTracker } from "../gate/budget";
 import type { OpenQuestion, Decision } from "../specboard/types";
-import { ModeratorOutputSchema, type DebateDispute } from "./schemas";
+import {
+  ModeratorOutputSchema,
+  RoundProposalSchema,
+  type RoundProposal,
+  type DebateDispute,
+} from "./schemas";
 
 export interface DebateDeps {
   callLlmFanOut: typeof callLlmFanOut;
@@ -49,6 +56,7 @@ interface RoundEntry {
   label: string;
   ok: boolean;
   text?: string;
+  proposal?: RoundProposal;
   error?: string;
   usage?: LlmCallResult["usage"];
 }
@@ -65,10 +73,142 @@ function addUsage(
   };
 }
 
+function cleanJsonText(text: string): string {
+  return text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+}
+
+function parseRoundProposal(
+  text: string,
+  author: string,
+  profile_real: string
+): RoundProposal {
+  const cleaned = cleanJsonText(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    throw new Error(
+      `Round proposal is not valid JSON: ${err instanceof Error ? err.message : String(err)}\nRaw text: ${text}`
+    );
+  }
+  return RoundProposalSchema.parse({ ...(parsed as Record<string, unknown>), author, profile_real });
+}
+
+function roundProposalSchemaJson(): string {
+  return JSON.stringify(
+    {
+      author: "your model identifier",
+      profile_real: "actual model name",
+      content_md:
+        "string - concise solution overview, key design decisions, risks, and effort estimate",
+      stance_changes: ["list of changes from your prior proposal"],
+      critiques: [
+        {
+          target: "target model identifier",
+          point: "specific, concrete critique",
+          severity: "blocker|major|minor|nit",
+        },
+      ],
+    },
+    null,
+    2
+  );
+}
+
+function persistRoundArtifact(
+  runDir: string | undefined,
+  round: number,
+  proposals: RoundProposal[],
+  moderator: unknown
+): void {
+  if (!runDir) return;
+  const debateDir = join(runDir, "artifacts", "debate");
+  mkdirSync(debateDir, { recursive: true });
+  writeFileSync(
+    join(debateDir, `round-${round}.json`),
+    JSON.stringify({ round, proposals, moderator }, null, 2)
+  );
+}
+
+function extractSection(content: string, headings: string[]): string {
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i].replace(/^#+\s*/, "").trim();
+    const match = headings.some((h) => lineText.toLowerCase().startsWith(h.toLowerCase()));
+    if (match) {
+      const end = lines.findIndex((line, idx) => idx > i && /^#+\s+/.test(line.trim()));
+      return lines
+        .slice(i + 1, end === -1 ? undefined : end)
+        .join("\n")
+        .trim();
+    }
+  }
+  return "";
+}
+
+function escapeCell(value: string): string {
+  return value
+    .replace(/\|/g, "\\|")
+    .replace(/\n+/g, " ")
+    .trim();
+}
+
+function renderComparisonMatrix(proposals: RoundProposal[]): string {
+  if (proposals.length === 0) {
+    return "## Comparison Matrix\n\nNo proposals available.\n";
+  }
+  const rows = proposals.map((p) => {
+    const keyDesign =
+      extractSection(p.content_md, ["Key Design", "Design Decisions"]) ||
+      p.content_md.split("\n")[0] ||
+      "(no content)";
+    const risks =
+      extractSection(p.content_md, ["Risks", "Risk"]) ||
+      p.critiques.map((c) => `${c.severity ?? "?"}: ${c.point}`).join("; ") ||
+      "(none listed)";
+    const workload =
+      extractSection(p.content_md, ["Effort", "Estimate", "Workload"]) ||
+      "(none listed)";
+    return `| ${escapeCell(p.author)} | ${escapeCell(keyDesign)} | ${escapeCell(risks)} | ${escapeCell(workload)} |`;
+  });
+  return [
+    "## Comparison Matrix",
+    "",
+    "| Model | Key Design | Risks | Workload |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
+}
+
+function renderRecommendation(
+  decisions: Decision[],
+  openQuestions: OpenQuestion[]
+): string {
+  const lines = ["## Recommendation", ""];
+  if (decisions.length > 0) {
+    lines.push(
+      `Adopt the ${decisions.length} resolved decision(s) and use the comparison matrix to select the implementation approach that best satisfies them.`
+    );
+  } else {
+    lines.push(
+      "No decisions were reached. Consider running another debate round or escalating the open questions."
+    );
+  }
+  if (openQuestions.length > 0) {
+    lines.push(
+      `Resolve the ${openQuestions.length} open question(s) before committing to an implementation.`
+    );
+  }
+  return lines.join("\n");
+}
+
 function renderProposalPrompt(requirement: string): string {
   return [
     "You are brainstorming an implementation approach for the following requirement.",
-    "Produce: a concise solution overview, key design decisions, risks, and a rough effort estimate.",
+    "Output strictly JSON matching this schema:",
+    roundProposalSchemaJson(),
+    "",
+    "Your content_md should include sections: Solution Overview, Key Design Decisions, Risks, and Effort Estimate.",
     "",
     "## Requirement",
     requirement,
@@ -78,16 +218,18 @@ function renderProposalPrompt(requirement: string): string {
 function renderResponsePrompt(
   requirement: string,
   label: string,
-  others: { label: string; text: string }[],
+  others: { label: string; proposal: RoundProposal }[],
   priorDisputes: DebateDispute[]
 ): string {
   const lines = [
     renderProposalPrompt(requirement),
     "",
-    "## Other proposals from this round (anonymized)",
-    ...others.map((o) => `### ${o.label}\n${o.text}`),
+    "## Other proposals from this round",
+    ...others.map((o) => `### ${o.label}\n${o.proposal.content_md}`),
     "",
     "Critique the other proposals and revise your own proposal in response.",
+    "For each critique, include a target, a concrete point, and a severity (blocker, major, minor, or nit).",
+    "Use stance_changes to summarize how your own position changed from the previous round.",
   ];
   if (priorDisputes.length > 0) {
     lines.push(
@@ -105,9 +247,31 @@ function renderResponsePrompt(
   return lines.join("\n");
 }
 
+function renderVagueCritiquePrompt(
+  requirement: string,
+  label: string,
+  ownProposal: string,
+  others: { label: string; content_md: string }[]
+): string {
+  return [
+    `You previously responded as ${label}, but at least one of your critiques was missing a severity or a concrete point.`,
+    "Revise your response so that every critique includes a target, a specific point, and a severity (blocker, major, minor, or nit).",
+    "Output strictly JSON matching the schema from the original prompt.",
+    "",
+    "## Requirement",
+    requirement,
+    "",
+    "## Your prior proposal",
+    ownProposal,
+    "",
+    "## Other proposals",
+    ...others.map((o) => `### ${o.label}\n${o.content_md}`),
+  ].join("\n");
+}
+
 function renderModeratorPrompt(
   requirement: string,
-  proposals: { label: string; text: string }[],
+  proposals: { label: string; content_md: string }[],
   priorDisputes: DebateDispute[]
 ): string {
   return [
@@ -119,7 +283,7 @@ function renderModeratorPrompt(
     requirement,
     "",
     "## Proposals",
-    ...proposals.map((p) => `### ${p.label}\n${p.text}`),
+    ...proposals.map((p) => `### ${p.label}\n${p.content_md}`),
     ...(priorDisputes.length > 0
       ? ["", "## Prior disputes", ...priorDisputes.map((d) => `- ${d.id}: ${d.topic}`)]
       : []),
@@ -128,6 +292,7 @@ function renderModeratorPrompt(
 
 function renderReport(
   requirement: string,
+  proposals: RoundProposal[],
   decisions: Decision[],
   openQuestions: OpenQuestion[]
 ): string {
@@ -157,6 +322,8 @@ function renderReport(
       }
     }
   }
+  lines.push("", renderComparisonMatrix(proposals));
+  lines.push("", renderRecommendation(decisions, openQuestions));
   return lines.join("\n");
 }
 
@@ -176,7 +343,7 @@ function toRoundEntries(
 ): RoundEntry[] {
   return config.models.map((name, i) => {
     const res = fanOutResults[i];
-    return {
+    const entry: RoundEntry = {
       profile: profiles[name],
       name,
       label: `Model ${i + 1}`,
@@ -185,6 +352,16 @@ function toRoundEntries(
       error: res?.ok ? undefined : res?.error,
       usage: res?.ok && res.result ? res.result.usage : undefined,
     };
+    if (entry.ok && entry.text) {
+      try {
+        entry.proposal = parseRoundProposal(entry.text, name, profiles[name].model);
+      } catch (err) {
+        entry.ok = false;
+        entry.error = err instanceof Error ? err.message : String(err);
+        entry.proposal = undefined;
+      }
+    }
+    return entry;
   });
 }
 
@@ -193,6 +370,7 @@ export async function runDebateInternal(
   requirement: string,
   profiles: Record<string, ModelProfile>,
   deps: DebateDeps,
+  runDir?: string,
   budget?: BudgetTracker
 ): Promise<DebateOutcome> {
   const synthesizer = profiles[config.synthesizer];
@@ -216,8 +394,11 @@ export async function runDebateInternal(
 
   const successCount = currentRound.filter((e) => e.ok).length;
   if (successCount < 2) {
+    const proposals = currentRound
+      .filter((e) => e.ok && e.proposal)
+      .map((e) => e.proposal!);
     return {
-      report: renderReport(requirement, [], []),
+      report: renderReport(requirement, proposals, [], []),
       openQuestions: [],
       decisions: [],
       rounds: 1,
@@ -234,8 +415,11 @@ export async function runDebateInternal(
     overBudget = budget.record(usage.costUsd);
   }
   if (overBudget) {
+    const proposals = currentRound
+      .filter((e) => e.ok && e.proposal)
+      .map((e) => e.proposal!);
     return {
-      report: renderReport(requirement, [], []),
+      report: renderReport(requirement, proposals, [], []),
       openQuestions: [],
       decisions: [],
       rounds: 1,
@@ -256,13 +440,105 @@ export async function runDebateInternal(
   const roundSummaries: RoundSummary[] = [];
 
   for (let roundNumber = 1; roundNumber <= config.debate_rounds; roundNumber++) {
-    const proposals = currentRound
-      .filter((e) => e.ok && e.text)
-      .map((e) => ({ label: e.label, text: e.text! }));
+    let proposals = currentRound
+      .filter((e) => e.ok && e.proposal)
+      .map((e) => e.proposal!);
+
+    // Re-prompt models that produced vague critiques (missing severity or point).
+    if (roundNumber >= 2) {
+      const vagueAuthors = new Set(
+        proposals
+          .filter((p) => p.critiques.some((c) => !c.severity || !c.point))
+          .map((p) => p.author)
+      );
+      if (vagueAuthors.size > 0 && roundNumber <= config.debate_rounds) {
+        const vagueProfiles = currentRound
+          .filter((e) => e.ok && e.proposal && vagueAuthors.has(e.name))
+          .map((e) => e.profile);
+        const rePrompted = await deps.callLlmFanOut(
+          vagueProfiles,
+          (profile) => {
+            const idx = modelProfiles.indexOf(profile);
+            const self = currentRound[idx];
+            const others = currentRound
+              .filter((e) => e.ok && e.proposal && e.name !== self.name)
+              .map((e) => ({ label: e.label, content_md: e.proposal!.content_md }));
+            return renderVagueCritiquePrompt(
+              requirement,
+              self.label,
+              self.proposal!.content_md,
+              others
+            );
+          },
+          { stage: config.id, maxRetrySteps: deps.maxRetrySteps, maxTokenCost: deps.maxTokenCost }
+        );
+        let rePromptCost = 0;
+        for (const res of rePrompted) {
+          const idx = modelProfiles.indexOf(res.profile);
+          if (idx < 0) continue;
+          const name = config.models[idx];
+          const old = currentRound[idx];
+          if (res.ok && res.result) {
+            try {
+              const proposal = parseRoundProposal(res.result.text, name, res.profile.model);
+              currentRound[idx] = {
+                ...old,
+                ok: true,
+                text: res.result.text,
+                proposal,
+                error: undefined,
+                usage: res.result.usage,
+              };
+            } catch (err) {
+              currentRound[idx] = {
+                ...old,
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+                proposal: undefined,
+                usage: res.result.usage,
+              };
+            }
+          } else {
+            currentRound[idx] = {
+              ...old,
+              ok: false,
+              error: res.error,
+              proposal: undefined,
+              usage: undefined,
+            };
+          }
+          const newEntry = currentRound[idx];
+          if (old.usage && newEntry.usage) {
+            usage = {
+              inTok: usage.inTok - old.usage.inTok + newEntry.usage.inTok,
+              outTok: usage.outTok - old.usage.outTok + newEntry.usage.outTok,
+              costUsd: usage.costUsd - old.usage.costUsd + newEntry.usage.costUsd,
+            };
+          } else if (newEntry.usage) {
+            usage = addUsage(usage, { usage: newEntry.usage });
+          }
+          rePromptCost += newEntry.usage?.costUsd ?? 0;
+        }
+        proposals = currentRound
+          .filter((e) => e.ok && e.proposal)
+          .map((e) => e.proposal!);
+        if (budget) {
+          overBudget = budget.record(rePromptCost);
+        }
+        if (overBudget) {
+          reason = "max_rounds";
+          break;
+        }
+      }
+    }
+
+    const moderatorProposals = currentRound
+      .filter((e) => e.ok && e.proposal)
+      .map((e) => ({ label: e.label, content_md: e.proposal!.content_md }));
 
     const moderatorResult = await deps.callLlm({
       profile: synthesizer,
-      prompt: renderModeratorPrompt(requirement, proposals, priorDisputes),
+      prompt: renderModeratorPrompt(requirement, moderatorProposals, priorDisputes),
       jsonMode: true,
       stage: config.id,
       maxRetrySteps: deps.maxRetrySteps,
@@ -316,6 +592,7 @@ export async function runDebateInternal(
     const remaining = output.remaining_disputes;
     lastRemaining = remaining;
     roundSummaries.push({ round: roundNumber, resolved: output.resolved.length, remaining: remaining.length });
+    persistRoundArtifact(runDir, roundNumber, proposals, output);
 
     if (remaining.length === 0) {
       reason = "converged";
@@ -337,8 +614,8 @@ export async function runDebateInternal(
       const idx = modelProfiles.indexOf(profile);
       const self = currentRound[idx];
       const others = currentRound
-        .filter((e) => e.ok && e.text && e.name !== self.name)
-        .map((e) => ({ label: e.label, text: e.text! }));
+        .filter((e) => e.ok && e.proposal && e.name !== self.name)
+        .map((e) => ({ label: e.label, proposal: e.proposal! }));
       return renderResponsePrompt(requirement, self.label, others, priorDisputes);
     }, { stage: config.id, maxRetrySteps: deps.maxRetrySteps, maxTokenCost: deps.maxTokenCost });
     currentRound = toRoundEntries(config, profiles, nextFanOut);
@@ -355,13 +632,16 @@ export async function runDebateInternal(
     }
   }
 
+  const finalProposals = currentRound
+    .filter((e) => e.ok && e.proposal)
+    .map((e) => e.proposal!);
   const finalOpenQuestions: OpenQuestion[] =
     reason === "stalled" || reason === "max_rounds" || overBudget
       ? lastRemaining.map((d) => ({ ...d }))
       : [];
 
   const decisions = Array.from(resolvedById.values());
-  const report = renderReport(requirement, decisions, finalOpenQuestions);
+  const report = renderReport(requirement, finalProposals, decisions, finalOpenQuestions);
 
   return {
     report,
@@ -383,9 +663,10 @@ export async function runDebate(
   requirement: string,
   profiles: Record<string, ModelProfile>,
   deps: DebateDeps,
+  runDir?: string,
   budget?: BudgetTracker
 ): Promise<DebateResult> {
-  const outcome = await runDebateInternal(config, requirement, profiles, deps, budget);
+  const outcome = await runDebateInternal(config, requirement, profiles, deps, runDir, budget);
   if (outcome.result === "fail") {
     const parts = [`Debate failed: ${outcome.reason ?? "unknown"}`];
     if (outcome.rawModeratorText) {

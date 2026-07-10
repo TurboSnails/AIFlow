@@ -35,6 +35,16 @@ function setupRunDir(): string {
   return runDir;
 }
 
+function makeProposal(name: string, content: string): string {
+  return JSON.stringify({
+    author: name,
+    profile_real: profiles[name].model,
+    content_md: content,
+    stance_changes: [],
+    critiques: [],
+  });
+}
+
 test("independent mode: both models succeed, synthesis is written, result is pass", async () => {
   const runDir = setupRunDir();
   try {
@@ -88,8 +98,8 @@ test("debate mode: writes report, registers artifact, and records decisions/open
   const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2, output: "debate-report.md" };
   try {
     const callLlmFanOut = mock(async () => [
-      { profile: profiles.a, ok: true, result: { text: "proposal A", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
-      { profile: profiles.b, ok: true, result: { text: "proposal B", usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
+      { profile: profiles.a, ok: true, result: { text: makeProposal("a", "proposal A"), usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
+      { profile: profiles.b, ok: true, result: { text: makeProposal("b", "proposal B"), usage: { inTok: 1, outTok: 1, costUsd: 0 } } },
     ]);
     const callLlm = mock(async () => ({
       text: JSON.stringify({
@@ -133,7 +143,10 @@ test("stops after the first fan-out round if it alone exceeds the budget, withou
   try {
     const debateStage: BrainstormStageConfig = { ...baseStage, mode: "debate", debate_rounds: 2 };
     const callLlmFanOut = mock(async (profs: ModelProfile[]) =>
-      profs.map((p) => ({ profile: p, ok: true, result: { text: "idea", usage: { inTok: 1, outTok: 1, costUsd: 6 } } }))
+      profs.map((p) => {
+        const name = p === profiles.a ? "a" : "b";
+        return { profile: p, ok: true, result: { text: makeProposal(name, "idea"), usage: { inTok: 1, outTok: 1, costUsd: 6 } } };
+      })
     );
     const callLlm = mock(async () => ({ text: "synthesis", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
     const budget = createBudgetTracker(5, 0);

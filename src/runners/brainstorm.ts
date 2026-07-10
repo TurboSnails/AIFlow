@@ -58,6 +58,11 @@ function renderSynthesisPrompt(requirement: string, finalRound: FanOutResult[]):
   return [
     "Synthesize the following independent proposals into: a comparison matrix, a recommended approach, and a list of open questions.",
     "",
+    "Use the following comparison matrix format:",
+    "",
+    "| Model | Key Design | Risks | Workload |",
+    "| --- | --- | --- | --- |",
+    "",
     "## Requirement",
     requirement,
     "",
@@ -83,7 +88,7 @@ export async function runBrainstormStage(
   const requirement = existsSync(requirementPath) ? readFileSync(requirementPath, "utf-8") : "";
 
   if (stageConfig.mode === "debate") {
-    const debate: DebateOutcome = await runDebateInternal(stageConfig, requirement, profiles, deps, budget);
+    const debate: DebateOutcome = await runDebateInternal(stageConfig, requirement, profiles, deps, runDir, budget);
 
     if (debate.overBudget) {
       return { result: "paused", reason: "budget_exceeded", usage: debate.usage };
