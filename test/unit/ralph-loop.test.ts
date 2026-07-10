@@ -876,6 +876,51 @@ test("spec tamper is restored and iteration fails", async () => {
   }
 });
 
+test("spec file created by the agent is deleted when tampered", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const specPath = join(cwd, "spec.md");
+    const specBoard = {
+      requirement: "req",
+      artifacts: { spec: "spec.md" },
+      spec_hash: "hash-before",
+      open_questions: [],
+      decisions: [],
+      review_matrix: {},
+    };
+    const readSpecBoard = mock(() => specBoard);
+    let hashCall = 0;
+    const hashSpecFile = mock(() => {
+      hashCall += 1;
+      return hashCall === 1 ? "hash-before" : "hash-after-different";
+    });
+    const runAgentTask = mock(async () => {
+      writeFileSync(specPath, "created by agent");
+      return { ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } };
+    });
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+      readSpecBoard,
+      hashSpecFile,
+    });
+
+    expect(result.result).toBe("fail");
+    expect(existsSync(specPath)).toBe(false);
+    const events = readEvents(runDir);
+    const gateEvent = events.find((e) => e.type === "gate_result");
+    expect(gateEvent).toMatchObject({ checks: "fail", reason: "spec_tampered" });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("multi-reviewer AI review passes reviewers map to runReviewGate", async () => {
   const { cwd, runDir } = makeFixtureDirs();
   try {

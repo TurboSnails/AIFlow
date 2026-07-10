@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { writeFileAtomic } from "../atomic/atomic-write";
 import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story, type Prd } from "../prd";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
@@ -10,7 +10,7 @@ import { hashConfigDir as realHashConfigDir, hashSpecFile as realHashSpecFile } 
 import { readSpecBoard as realReadSpecBoard } from "../specboard/specboard";
 import type { SpecBoard } from "../specboard/types";
 import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
-import { appendEvent } from "../events/events";
+import { appendEvent, type GateResultAiflowEvent } from "../events/events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
 import type { RalphLoopStopReason } from "../engine/state";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
@@ -111,7 +111,8 @@ export async function runRalphLoopOnce(
   const board = (deps.readSpecBoard ?? realReadSpecBoard)(runDir);
   const specPath = board.artifacts["spec"] ?? "spec.md";
   const specFullPath = join(cwd, specPath);
-  const specContentBefore = existsSync(specFullPath) ? readFileSync(specFullPath, "utf-8") : undefined;
+  const specExistedBefore = existsSync(specFullPath);
+  const specContentBefore = specExistedBefore ? readFileSync(specFullPath, "utf-8") : undefined;
 
   await deps.git.revParseHead(cwd);
   const configHashBefore = deps.hashConfigDir(cwd);
@@ -132,17 +133,31 @@ export async function runRalphLoopOnce(
     const specHashAfter = (deps.hashSpecFile ?? realHashSpecFile)(specFullPath);
     if (configHashAfter !== configHashBefore || specHashAfter !== specHashBefore) {
       await deps.git.checkoutConfigOnly(cwd);
-      if (specContentBefore !== undefined) {
-        writeFileAtomic(specFullPath, specContentBefore);
+      if (specExistedBefore) {
+        writeFileAtomic(specFullPath, specContentBefore!);
+      } else {
+        rmSync(specFullPath, { force: true });
       }
       const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
       writePrd(prdPath, updatedPrd);
-      const changedTarget = configHashAfter !== configHashBefore ? "`.aiflow/config/`" : "`spec.md`";
+      const configChanged = configHashAfter !== configHashBefore;
+      const specChanged = specHashAfter !== specHashBefore;
+      const changedTarget =
+        configChanged && specChanged
+          ? "`.aiflow/config/` 和 `spec.md`"
+          : configChanged
+            ? "`.aiflow/config/`"
+            : "`spec.md`";
       appendFileSync(
         fixListPath,
         `\n## ${story.id} (round ${updatedPrd.stories.find((s) => s.id === story.id)!.fixCount})\n检测到 ${changedTarget} 在本轮被修改，已自动恢复并记为门禁失败。\n`
       );
-      const reason = configHashAfter !== configHashBefore ? "config_tampered" : "spec_tampered";
+      const reason: GateResultAiflowEvent["reason"] =
+        configChanged && specChanged
+          ? "config_and_spec_tampered"
+          : configChanged
+            ? "config_tampered"
+            : "spec_tampered";
       appendEvent(runDir, {
         ts: new Date().toISOString(),
         type: "gate_result",
