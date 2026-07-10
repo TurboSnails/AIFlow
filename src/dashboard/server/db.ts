@@ -2,6 +2,8 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import { z } from "zod";
+import { summarizeRunStatus } from "../../runs/store";
+import type { EngineState } from "../../engine/state";
 
 export const DashboardEventSchema = z.object({
   ts: z.string(),
@@ -139,26 +141,47 @@ export function tailRun(
   return { cursor: nextCursor, ingested: rows.length };
 }
 
-export function getRuns(db: Database): Array<{ run_id: string; ts: string; status: string }> {
-  return db
+export function getRuns(
+  db: Database,
+  runsRoot?: string,
+): Array<{ run_id: string; ts: string; status: string }> {
+  const rows = db
     .prepare(`
-      SELECT run_id, ts, type as status
+      SELECT run_id, ts
       FROM events e
       WHERE id = (
         SELECT id FROM events WHERE run_id = e.run_id ORDER BY ts DESC, id DESC LIMIT 1
       )
       ORDER BY ts DESC
     `)
-    .all() as ReturnType<typeof getRuns>;
+    .all() as Array<{ run_id: string; ts: string }>;
+  return rows.map((row) => {
+    let status = "unknown";
+    if (runsRoot) {
+      const runDir = join(runsRoot, row.run_id);
+      try {
+        const state = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8")) as EngineState;
+        status = summarizeRunStatus(state);
+      } catch {
+        status = "unknown";
+      }
+    }
+    return { run_id: row.run_id, ts: row.ts, status };
+  });
 }
 
-export function getStageEventsForRun(
-  db: Database,
+export function getStagesForRun(
+  _db: Database,
+  runsRoot: string,
   runId: string,
-): Array<{ id: number; run_id: string; ts: string; type: string; payload: string }> {
-  return db
-    .prepare("SELECT id, run_id, ts, type, payload FROM events WHERE run_id = ? AND (type LIKE 'stage_%' OR type = 'human_gate') ORDER BY ts, id")
-    .all(runId) as ReturnType<typeof getStageEventsForRun>;
+): Array<{ id: string; status: string }> {
+  const runDir = join(runsRoot, runId);
+  try {
+    const state = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8")) as EngineState;
+    return state.stages.map((s) => ({ id: s.id, status: s.status }));
+  } catch {
+    return [];
+  }
 }
 
 export function getCostForRun(
@@ -171,18 +194,16 @@ export function getCostForRun(
   let total_usd = 0;
   const stageMap = new Map<string, { in: number; out: number; usd: number }>();
   for (const row of rows) {
-    if (row.type !== "llm_call") continue;
+    if (row.type !== "opencode_step_finish" && row.type !== "stage_cost") continue;
     let payload: Record<string, unknown>;
     try {
       payload = JSON.parse(row.payload);
     } catch {
       continue;
     }
-    const usage = payload.usage as Record<string, number> | undefined;
-    if (!usage) continue;
-    const inTok = usage.inTok ?? usage.in_tokens ?? 0;
-    const outTok = usage.outTok ?? usage.out_tokens ?? 0;
-    const cost = usage.costUsd ?? usage.cost_usd ?? 0;
+    const inTok = Number(payload.in_tok ?? 0);
+    const outTok = Number(payload.out_tok ?? 0);
+    const cost = Number(payload.cost_usd ?? 0);
     total_in += inTok;
     total_out += outTok;
     total_usd += cost;

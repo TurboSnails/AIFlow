@@ -2,20 +2,19 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 
-interface StageEvent {
-  id: number;
-  type: string;
-  stage: string;
+interface StageState {
+  id: string;
+  status: string;
 }
 
 export function Kanban() {
   const { id } = useParams<{ id: string }>();
-  const [stages, setStages] = useState<StageEvent[]>([]);
+  const [stages, setStages] = useState<StageState[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
-    api<{ stages: StageEvent[] }>(`/api/runs/${id}/stages`)
+    api<{ stages: StageState[] }>(`/api/runs/${id}/stages`)
       .then((data) => setStages(data.stages))
       .catch((err) => setError(err.message));
   }, [id]);
@@ -23,10 +22,10 @@ export function Kanban() {
   if (error) return <div>Error: {error}</div>;
 
   const columns = [
-    { title: "Pending", types: ["stage_pending"] },
-    { title: "Running", types: ["stage_start"] },
-    { title: "Waiting", types: ["human_gate"] },
-    { title: "Done", types: ["stage_done"] },
+    { title: "Pending", statuses: ["pending"] },
+    { title: "Running", statuses: ["running"] },
+    { title: "Waiting", statuses: ["waiting_human"] },
+    { title: "Done", statuses: ["done"] },
   ];
 
   return (
@@ -37,9 +36,9 @@ export function Kanban() {
           <div key={col.title} style={{ flex: 1, border: "1px solid #ccc", padding: "0.5rem" }}>
             <h2>{col.title}</h2>
             {stages
-              .filter((s) => col.types.includes(s.type))
+              .filter((s) => col.statuses.includes(s.status))
               .map((s) => (
-                <div key={s.id}>{s.stage}</div>
+                <div key={s.id}>{s.id}</div>
               ))}
           </div>
         ))}
