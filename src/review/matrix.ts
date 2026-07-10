@@ -1,5 +1,5 @@
 import type { ModelProfile, ReviewGateConfig } from "../config/schema";
-import { ReviewOutputSchema, type ReviewIssue } from "../gate/review-schema";
+import { ReviewOutputSchema, type ReviewIssue, type ReviewOutput } from "../gate/review-schema";
 import { buildReviewPrompt } from "../gate/review-gate";
 
 export interface ReviewMatrixDeps {
@@ -15,6 +15,7 @@ export interface ReviewMatrixDeps {
 export interface ReviewMatrixResult {
   aiReview: "pass" | "fail" | "skipped" | "needs_arbitration";
   issues: ReviewIssue[];
+  issueSets: ReviewOutput[];
   verdicts: Record<string, "pass" | "fail" | "skipped">;
   usage: { inTok: number; outTok: number; costUsd: number };
 }
@@ -33,6 +34,7 @@ export async function runReviewMatrix(
   ): ReviewMatrixResult => ({
     aiReview,
     issues: [],
+    issueSets: [],
     verdicts: {},
     usage: { inTok: 0, outTok: 0, costUsd: 0 },
   });
@@ -76,6 +78,7 @@ export async function runReviewMatrix(
         return {
           name,
           verdict: hasIssues ? ("fail" as const) : ("pass" as const),
+          summary: parsed.data.summary,
           issues: parsed.data.issues,
           usage: callUsage,
         };
@@ -91,11 +94,15 @@ export async function runReviewMatrix(
   );
 
   const issues: ReviewIssue[] = [];
+  const issueSets: ReviewOutput[] = [];
   const verdicts: Record<string, "pass" | "fail" | "skipped"> = {};
   const usage = { inTok: 0, outTok: 0, costUsd: 0 };
 
-  for (const { name, verdict, issues: reviewerIssues, usage: reviewerUsage } of results) {
+  for (const { name, verdict, summary, issues: reviewerIssues, usage: reviewerUsage } of results) {
     verdicts[name] = verdict;
+    if (summary !== undefined) {
+      issueSets.push({ summary, issues: reviewerIssues });
+    }
     issues.push(...reviewerIssues);
     usage.inTok += reviewerUsage.inTok;
     usage.outTok += reviewerUsage.outTok;
@@ -121,5 +128,5 @@ export async function runReviewMatrix(
     aiReview = "pass";
   }
 
-  return { aiReview, issues, verdicts, usage };
+  return { aiReview, issues, issueSets, verdicts, usage };
 }

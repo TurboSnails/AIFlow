@@ -64,6 +64,7 @@ test("single non-author reviewer with no issues passes", async () => {
   expect(result.aiReview).toBe("pass");
   expect(result.verdicts).toEqual({ rev: "pass" });
   expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [] }]);
   expect(result.usage).toEqual({ inTok: 1, outTok: 1, costUsd: 0.001 });
 });
 
@@ -82,6 +83,7 @@ test("single non-author reviewer with issues fails", async () => {
   expect(result.aiReview).toBe("fail");
   expect(result.verdicts).toEqual({ rev: "fail" });
   expect(result.issues).toEqual([issue]);
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [issue] }]);
 });
 
 test("multiple reviewers run in parallel and return needs_arbitration on split verdict", async () => {
@@ -99,6 +101,7 @@ test("multiple reviewers run in parallel and return needs_arbitration on split v
   expect(result.aiReview).toBe("needs_arbitration");
   expect(result.verdicts).toEqual({ a: "pass", b: "fail" });
   expect(result.issues).toEqual([issue]);
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [] }, { summary: "s", issues: [issue] }]);
 });
 
 test("all reviewers failing returns fail with merged issues", async () => {
@@ -117,6 +120,7 @@ test("all reviewers failing returns fail with merged issues", async () => {
   expect(result.aiReview).toBe("fail");
   expect(result.verdicts).toEqual({ a: "fail", b: "fail" });
   expect(result.issues).toEqual([issueA, issueB]);
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [issueA] }, { summary: "s", issues: [issueB] }]);
 });
 
 test("all reviewers passing returns pass", async () => {
@@ -132,6 +136,7 @@ test("all reviewers passing returns pass", async () => {
   );
   expect(result.aiReview).toBe("pass");
   expect(result.verdicts).toEqual({ a: "pass", b: "pass" });
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [] }, { summary: "s", issues: [] }]);
 });
 
 test("strict mode with no remaining reviewers after author exclusion returns fail", async () => {
@@ -195,6 +200,7 @@ test("throws reviewer call counts as fail and continues", async () => {
   expect(result.aiReview).toBe("needs_arbitration");
   expect(result.verdicts).toEqual({ a: "fail", b: "pass" });
   expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([{ summary: "s", issues: [] }]);
 });
 
 test("aggregates usage across multiple reviewers", async () => {
@@ -219,4 +225,96 @@ test("aggregates usage across multiple reviewers", async () => {
   );
   expect(callCount).toBe(2);
   expect(result.usage).toEqual({ inTok: 20, outTok: 10, costUsd: 0.02 });
+});
+
+test("invalid reviewer output is treated as fail and usage is still counted", async () => {
+  const deps = {
+    callReviewer: async () => ({
+      data: { issues: [] },
+      usage: { inTok: 2, outTok: 2, costUsd: 0.002 },
+    }),
+  };
+  const result = await runReviewMatrix(
+    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { rev: reviewer },
+    "other",
+    "/tmp",
+    "diff",
+    ["acc"],
+    deps
+  );
+  expect(result.aiReview).toBe("fail");
+  expect(result.verdicts).toEqual({ rev: "fail" });
+  expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([]);
+  expect(result.usage).toEqual({ inTok: 2, outTok: 2, costUsd: 0.002 });
+});
+
+test("configured reviewer missing from reviewers map is skipped", async () => {
+  const deps = {
+    callReviewer: async () => ({
+      data: { summary: "s", issues: [] },
+      usage: { inTok: 1, outTok: 1, costUsd: 0 },
+    }),
+  };
+  const result = await runReviewMatrix(
+    { enabled: true, reviewers: ["missing"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { rev: reviewer },
+    "other",
+    "/tmp",
+    "diff",
+    ["acc"],
+    deps
+  );
+  expect(result.aiReview).toBe("skipped");
+  expect(result.verdicts).toEqual({ missing: "skipped" });
+  expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([]);
+  expect(result.usage).toEqual({ inTok: 0, outTok: 0, costUsd: 0 });
+});
+
+test("all configured reviewers missing from reviewers map returns skipped when strict is false", async () => {
+  const deps = {
+    callReviewer: async () => ({
+      data: { summary: "s", issues: [] },
+      usage: { inTok: 1, outTok: 1, costUsd: 0 },
+    }),
+  };
+  const result = await runReviewMatrix(
+    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { rev: reviewer },
+    "other",
+    "/tmp",
+    "diff",
+    ["acc"],
+    deps
+  );
+  expect(result.aiReview).toBe("skipped");
+  expect(result.verdicts).toEqual({ a: "skipped", b: "skipped" });
+  expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([]);
+  expect(result.usage).toEqual({ inTok: 0, outTok: 0, costUsd: 0 });
+});
+
+test("all configured reviewers missing from reviewers map returns fail when strict is true", async () => {
+  const deps = {
+    callReviewer: async () => ({
+      data: { summary: "s", issues: [] },
+      usage: { inTok: 1, outTok: 1, costUsd: 0 },
+    }),
+  };
+  const result = await runReviewMatrix(
+    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: true },
+    { rev: reviewer },
+    "other",
+    "/tmp",
+    "diff",
+    ["acc"],
+    deps
+  );
+  expect(result.aiReview).toBe("fail");
+  expect(result.verdicts).toEqual({ a: "skipped", b: "skipped" });
+  expect(result.issues).toEqual([]);
+  expect(result.issueSets).toEqual([]);
+  expect(result.usage).toEqual({ inTok: 0, outTok: 0, costUsd: 0 });
 });
