@@ -29,6 +29,8 @@ export interface ReviewGateDeps {
     deps: ReviewMatrixDeps
   ) => Promise<ReviewMatrixResult>;
   runArbitrator?: (profile: ModelProfile, diff: string, issueSets: ReviewOutput[]) => Promise<ArbitrationOutput>;
+  reviewers?: Record<string, ModelProfile>;
+  authorProfile?: string;
 }
 
 const defaultDeps: ReviewGateDeps = {
@@ -72,8 +74,7 @@ export async function runReviewGate(
   cwd: string,
   diff: string,
   storyAcceptance: string[],
-  deps: ReviewGateDeps = defaultDeps,
-  reviewers?: Record<string, ModelProfile>
+  deps: ReviewGateDeps = defaultDeps
 ): Promise<ReviewGateOutcome> {
   const checkResult = await deps.runChecks(config.checks, cwd);
   if (!checkResult.pass) {
@@ -86,9 +87,20 @@ export async function runReviewGate(
 
   const prompt = buildReviewPrompt(diff, storyAcceptance);
   const reviewersList = config.ai_review.reviewers;
-  if (reviewersList && reviewersList.length > 1 && reviewers) {
+  if (reviewersList && reviewersList.length > 1) {
+    if (!deps.reviewers) {
+      throw new Error("Multi-reviewer AI review requires a reviewers map");
+    }
     const runMatrix = deps.runReviewMatrix ?? realRunReviewMatrix;
-    const matrix = await runMatrix(config.ai_review, reviewers, reviewerProfile.model, cwd, diff, storyAcceptance, deps);
+    const matrix = await runMatrix(
+      config.ai_review,
+      deps.reviewers,
+      deps.authorProfile ?? reviewerProfile.model,
+      cwd,
+      diff,
+      storyAcceptance,
+      deps
+    );
     if (matrix.aiReview === "needs_arbitration") {
       const runArb = deps.runArbitrator ?? realRunArbitrator;
       const arbitration = await runArb(reviewerProfile, diff, matrix.issueSets);

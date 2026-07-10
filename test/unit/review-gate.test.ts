@@ -123,8 +123,7 @@ test("review gate delegates to matrix when multiple reviewers are configured", a
     "/tmp/x",
     "diff",
     ["accept"],
-    { runChecks, callReviewer, runReviewMatrix },
-    reviewers
+    { runChecks, callReviewer, runReviewMatrix, reviewers }
   );
   expect(outcome.checks).toBe("pass");
   expect(outcome.aiReview).toBe("pass");
@@ -132,6 +131,21 @@ test("review gate delegates to matrix when multiple reviewers are configured", a
   expect(outcome.usage).toEqual({ inTok: 20, outTok: 10, costUsd: 0.002 });
   expect(runReviewMatrix).toHaveBeenCalled();
   expect(callReviewer).not.toHaveBeenCalled();
+});
+
+test("multi-reviewer config without reviewers map throws a clear error", async () => {
+  const matrixConfig: ReviewGateConfig = {
+    ...baseConfig,
+    ai_review: { ...baseConfig.ai_review, reviewers: ["a", "b"] },
+  };
+  const runChecks = mock(async () => ({ pass: true, output: "" }));
+  const callReviewer = mock(async () => ({
+    data: { summary: "unused", issues: [] },
+    usage: { inTok: 0, outTok: 0, costUsd: 0 },
+  }));
+  await expect(
+    runReviewGate(matrixConfig, reviewerProfile, "/tmp/x", "diff", ["accept"], { runChecks, callReviewer })
+  ).rejects.toThrow("Multi-reviewer AI review requires a reviewers map");
 });
 
 test("matrix disagreement triggers arbitrator and uses its final verdict", async () => {
@@ -171,8 +185,7 @@ test("matrix disagreement triggers arbitrator and uses its final verdict", async
     "/tmp/x",
     "diff",
     ["accept"],
-    { runChecks, callReviewer: mock(async () => ({ data: { summary: "", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })), runReviewMatrix, runArbitrator },
-    reviewers
+    { runChecks, callReviewer: mock(async () => ({ data: { summary: "", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })), runReviewMatrix, runArbitrator, reviewers }
   );
   expect(outcome.aiReview).toBe("fail");
   expect(outcome.blockers).toBe(1);
