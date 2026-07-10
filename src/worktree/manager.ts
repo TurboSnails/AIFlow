@@ -5,6 +5,7 @@ import { basename, resolve } from "node:path";
 export interface GitResult {
   exitCode: number;
   stdout: string;
+  stderr: string;
 }
 
 export interface WorktreeContext {
@@ -27,14 +28,17 @@ export interface WorktreeManagerDeps {
 
 const defaultRunGit = async (cwd: string, args: string[]): Promise<GitResult> => {
   const result = await $`git -C ${cwd} ${args}`.nothrow().quiet();
-  return { exitCode: result.exitCode, stdout: result.stdout.toString("utf-8") };
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout.toString("utf-8"),
+    stderr: result.stderr.toString("utf-8"),
+  };
 };
 
-async function defaultListWorktrees(cwd: string): Promise<WorktreeEntry[]> {
-  const out = await $`git -C ${cwd} worktree list --porcelain`.text();
+function parsePorcelainWorktrees(output: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
   let current: Partial<WorktreeEntry> = {};
-  for (const line of out.split("\n")) {
+  for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
       if (current.path) entries.push(current as WorktreeEntry);
       current = { path: line.slice("worktree ".length) };
@@ -45,6 +49,13 @@ async function defaultListWorktrees(cwd: string): Promise<WorktreeEntry[]> {
   if (current.path) entries.push(current as WorktreeEntry);
   return entries;
 }
+
+async function defaultListWorktrees(cwd: string): Promise<WorktreeEntry[]> {
+  const out = await $`git -C ${cwd} worktree list --porcelain`.text();
+  return parsePorcelainWorktrees(out);
+}
+
+export { parsePorcelainWorktrees };
 
 const defaultStatMtime = (path: string): number | undefined => {
   try {
@@ -71,7 +82,7 @@ export async function createWorktree(
   const branch = `aiflow/${runId}`;
   const result = await deps.runGit(cwd, ["worktree", "add", worktreePath, "-b", branch]);
   if (result.exitCode !== 0) {
-    throw new Error(`git worktree add failed: ${result.stdout}`);
+    throw new Error(`git worktree add failed: ${result.stdout} ${result.stderr}`);
   }
   return { originalCwd: cwd, worktreePath, branch };
 }
@@ -82,18 +93,18 @@ export async function commitStory(
   title: string,
   deps: WorktreeManagerDeps = defaultDeps,
 ): Promise<void> {
-  const { exitCode: stageCode, stdout: stageOut } = await deps.runGit(ctx.worktreePath, ["add", "-A"]);
+  const { exitCode: stageCode, stdout: stageOut, stderr: stageErr } = await deps.runGit(ctx.worktreePath, ["add", "-A"]);
   if (stageCode !== 0) {
-    throw new Error(`git add failed: ${stageOut}`);
+    throw new Error(`git add failed: ${stageOut} ${stageErr}`);
   }
-  const { exitCode: commitCode, stdout: commitOut } = await deps.runGit(ctx.worktreePath, [
+  const { exitCode: commitCode, stdout: commitOut, stderr: commitErr } = await deps.runGit(ctx.worktreePath, [
     "commit",
     "-q",
     "-m",
     `feat(${storyId}): ${title}`,
   ]);
   if (commitCode !== 0) {
-    throw new Error(`git commit failed: ${commitOut}`);
+    throw new Error(`git commit failed: ${commitOut} ${commitErr}`);
   }
 }
 

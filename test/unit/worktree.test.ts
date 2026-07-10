@@ -6,6 +6,7 @@ import {
   resolveConflict,
   removeWorktree,
   listStaleWorktrees,
+  parsePorcelainWorktrees,
   type WorktreeManagerDeps,
   type GitResult,
   type WorktreeEntry,
@@ -18,7 +19,7 @@ function makeDeps(
   const deps: WorktreeManagerDeps = {
     runGit: async (cwd: string, args: string[]): Promise<GitResult> => {
       calls.push({ cwd, args });
-      return { exitCode: 0, stdout: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
     },
     listWorktrees: async () => [],
     now: () => 1_000_000,
@@ -43,7 +44,7 @@ describe("createWorktree", () => {
 
   test("throws when git worktree add fails", async () => {
     const { deps } = makeDeps({
-      runGit: async () => ({ exitCode: 1, stdout: "fatal" }),
+      runGit: async () => ({ exitCode: 1, stdout: "fatal", stderr: "worktree already exists" }),
     });
     await expect(createWorktree("/repo", "20260710_abc123", deps)).rejects.toThrow("git worktree add failed");
   });
@@ -89,7 +90,7 @@ describe("tryMergeBack", () => {
 
   test("returns conflict when merge fails", async () => {
     const { deps } = makeDeps({
-      runGit: async () => ({ exitCode: 1, stdout: "" }),
+      runGit: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
     });
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
@@ -114,7 +115,7 @@ describe("resolveConflict", () => {
 
   test("returns failed when abort fails", async () => {
     const { deps } = makeDeps({
-      runGit: async () => ({ exitCode: 1, stdout: "" }),
+      runGit: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
     });
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
@@ -170,3 +171,30 @@ describe("listStaleWorktrees", () => {
     expect(stale).toHaveLength(0);
   });
 });
+
+describe("parsePorcelainWorktrees", () => {
+  test("parses git worktree list --porcelain output", () => {
+    const porcelain = [
+      "worktree /path/to/main",
+      "branch refs/heads/main",
+      "HEAD abc123",
+      "",
+      "worktree /path/to/branch1",
+      "branch refs/heads/aiflow/run-1",
+      "HEAD def456",
+      "",
+      "worktree /path/to/another-worktree",
+      "branch refs/heads/feature/xyz",
+      "",
+    ].join("\n");
+
+    const entries = parsePorcelainWorktrees(porcelain);
+
+    expect(entries).toEqual([
+      { path: "/path/to/main", branch: "main" },
+      { path: "/path/to/branch1", branch: "aiflow/run-1" },
+      { path: "/path/to/another-worktree", branch: "feature/xyz" },
+    ]);
+  });
+});
+
