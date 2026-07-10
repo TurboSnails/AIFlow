@@ -85,7 +85,7 @@ function readTail(path: string, maxChars: number): string {
   return content.slice(-maxChars);
 }
 
-function emitStorySuspended(runDir: string, stageId: string, storyId: string, reason: StorySuspendedAiflowEvent["reason"]): void {
+function emitStorySuspended(runDir: string, storyId: string, reason: StorySuspendedAiflowEvent["reason"]): void {
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_suspended", story: storyId, reason });
 }
 
@@ -194,7 +194,7 @@ export async function runRalphLoopOnce(
       });
       const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
       if (suspended) {
-        emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+        emitStorySuspended(runDir, story.id,"fix_limit");
       }
       const result = suspended ? "suspended" : "fail";
       appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
@@ -241,7 +241,7 @@ export async function runRalphLoopOnce(
     });
     const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
     if (suspended) {
-      emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+      emitStorySuspended(runDir, story.id,"fix_limit");
     }
     const result = suspended ? "suspended" : "fail";
     appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
@@ -332,7 +332,7 @@ export async function runRalphLoopOnce(
 
   const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
   if (suspended) {
-    emitStorySuspended(runDir, stageConfig.id, story.id, "fix_limit");
+    emitStorySuspended(runDir, story.id,"fix_limit");
   }
   const result = suspended ? "suspended" : "fail";
   appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
@@ -407,7 +407,7 @@ function suspendStoryById(
     stories: prd.stories.map((s) => (s.id === storyId ? { ...s, suspended: true } : s)),
   };
   writePrd(prdPath, updated);
-  emitStorySuspended(runDir, stageId, storyId, reason);
+  emitStorySuspended(runDir, storyId, reason);
   return updated;
 }
 
