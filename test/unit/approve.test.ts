@@ -345,6 +345,225 @@ stages:
   }
 });
 
+test("main_dev_decides passes budget limits to callLlm and records usage in state", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+budget:
+  max_cost_usd: 1
+  max_retry_steps: 7
+  max_token_cost: 0.5
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    let seenOptions: any;
+    const result = await runApprove(cwd, { runId }, {
+      callLlm: async (opts: any) => {
+        seenOptions = opts;
+        return {
+          text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved by main dev" }] }),
+          usage: { inTok: 10, outTok: 20, costUsd: 0.05 },
+        };
+      },
+      runners: {},
+    });
+    expect(result.status).toBe("resumed");
+    expect(result.state!.stages[0].status).toBe("done");
+    expect(result.state!.cost).toEqual({ input_tokens: 10, output_tokens: 20, est_usd: 0.05 });
+    expect(seenOptions.maxRetrySteps).toBe(7);
+    expect(seenOptions.maxTokenCost).toBe(0.5);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("main_dev_decides aborts when budget limit is exceeded", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+budget:
+  max_cost_usd: 0.01
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    await expect(runApprove(cwd, { runId }, {
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved by main dev" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0.02 },
+      }),
+      runners: {},
+    })).rejects.toThrow(/Budget exceeded/);
+    const state = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(state.stages[0].status).toBe("aborted");
+    expect(state.stages[0].reason).toBe("budget_exceeded");
+    const board = JSON.parse(readFileSync(join(runDir, "specboard.json"), "utf-8"));
+    expect(board.open_questions).toHaveLength(1);
+    expect(board.decisions).toHaveLength(0);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ralph_loop stage-level on_unresolved main_dev_decides resolves open questions", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    on_unresolved: main_dev_decides
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "develop", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    const result = await runApprove(cwd, { runId }, {
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved by main dev" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
+      }),
+      runners: {},
+    });
+    expect(result.status).toBe("resumed");
+    expect(result.state!.stages[0].status).toBe("done");
+    const board = JSON.parse(readFileSync(join(runDir, "specboard.json"), "utf-8"));
+    expect(board.open_questions).toHaveLength(0);
+    expect(board.decisions).toHaveLength(1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("main_dev_decides rejects resolutions with missing question IDs", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [
+        { id: "q1", topic: "t1", positions: {} },
+        { id: "q2", topic: "t2", positions: {} },
+      ],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    await expect(runApprove(cwd, { runId }, {
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
+      }),
+      runners: {},
+    })).rejects.toThrow(/missing=\[q2\]/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("main_dev_decides rejects resolutions with unknown question IDs", async () => {
+  const pipelineYaml = `name: test-pipeline
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [a, b]
+    synthesizer: main-dev
+    on_unresolved: main_dev_decides
+`;
+  const { cwd, runId, runDir } = setupRunWithPipeline(
+    pipelineYaml,
+    [{ id: "brainstorm", status: "waiting_human", entered_at: "2026-07-06T10:00:00.000Z" }]
+  );
+  writeFileSync(
+    join(runDir, "specboard.json"),
+    JSON.stringify({
+      requirement: "test",
+      artifacts: {},
+      open_questions: [{ id: "q1", topic: "t1", positions: {} }],
+      decisions: [],
+      review_matrix: {},
+    })
+  );
+  try {
+    await expect(runApprove(cwd, { runId }, {
+      callLlm: async () => ({
+        text: JSON.stringify({ resolutions: [{ id: "q1", resolution: "resolved" }, { id: "q2", resolution: "unknown" }] }),
+        usage: { inTok: 0, outTok: 0, costUsd: 0 },
+      }),
+      runners: {},
+    })).rejects.toThrow(/unknown=\[q2\]/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 function setupWaitingRun(autoClean: boolean): { cwd: string; runId: string; runDir: string; stateJson: string } {
   const cwd = mkdtempSync(join(tmpdir(), "aiflow-approve-dirty-"));
   mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });

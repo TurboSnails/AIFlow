@@ -8,10 +8,11 @@ import { writeStateAtomic, type EngineState } from "../engine/state";
 import { appendEvent } from "../events/events";
 import { writeGateAnswer } from "../gate-answer/answer";
 import { assertCleanIfAutoClean } from "./dirty-guard";
-import { callLlm } from "../llm/client";
+import { callLlm, type LlmCallResult } from "../llm/client";
 import { resolveOpenQuestions, readSpecBoard } from "../specboard/specboard";
 import type { SpecBoard } from "../specboard/types";
-import type { ModelProfile, ProjectConfig } from "../config/schema";
+import type { ModelProfile, ProjectConfig, BudgetConfig } from "../config/schema";
+
 
 export interface ApproveResult {
   status: "resumed" | "no_runs" | "missing_run_dir" | "no_waiting_stage" | "ambiguous_stage" | "stage_not_waiting";
@@ -30,17 +31,35 @@ const ResolutionsSchema = z.object({
 });
 
 async function resolveOpenQuestionsWithMainDev(
-  runDir: string,
   board: SpecBoard,
   mainDevProfile: ModelProfile,
+  budget: Pick<BudgetConfig, "max_retry_steps" | "max_token_cost"> | undefined,
   callLlmFn: typeof callLlm = callLlm
-): Promise<void> {
+): Promise<{ resolutions: Array<{ id: string; resolution: string }>; usage: LlmCallResult["usage"] }> {
   const prompt = `You are the main-dev. Resolve the following open questions as JSON: { "resolutions": [{ "id": "...", "resolution": "..." }] }.\n${JSON.stringify(board.open_questions)}`;
-  const result = await callLlmFn({ profile: mainDevProfile, prompt, jsonMode: true });
+  const result = await callLlmFn({
+    profile: mainDevProfile,
+    prompt,
+    jsonMode: true,
+    maxRetrySteps: budget?.max_retry_steps,
+    maxTokenCost: budget?.max_token_cost,
+  });
   const data = ResolutionsSchema.parse(JSON.parse(result.text));
-  for (const r of data.resolutions) {
-    resolveOpenQuestions(runDir, [r.id], r.resolution, "main_dev");
+
+  const openQuestionIds = new Set(board.open_questions.map((q) => q.id));
+  const resolvedIds = data.resolutions.map((r) => r.id);
+  const resolvedIdsSet = new Set(resolvedIds);
+
+  const missing = [...openQuestionIds].filter((id) => !resolvedIdsSet.has(id));
+  const unknown = resolvedIds.filter((id) => !openQuestionIds.has(id));
+
+  if (missing.length > 0 || unknown.length > 0) {
+    throw new Error(
+      `Main-dev resolutions do not match open questions: missing=[${missing.join(", ")}], unknown=[${unknown.join(", ")}]`
+    );
   }
+
+  return { resolutions: data.resolutions, usage: result.usage };
 }
 
 function loadProjectConfigWithDefaults(cwd: string): ProjectConfig {
@@ -113,12 +132,41 @@ export async function runApprove(
   if (stageConfig.type !== "human_gate") {
     if (board.open_questions.length > 0) {
       const effectiveOnUnresolved =
-        stageConfig.type === "brainstorm" && stageConfig.on_unresolved
+        (stageConfig.type === "brainstorm" || stageConfig.type === "ralph_loop") && stageConfig.on_unresolved
           ? stageConfig.on_unresolved
           : pipelineConfig.on_unresolved ?? projectConfig.on_unresolved;
       if (effectiveOnUnresolved === "main_dev_decides") {
         const mainDevProfile = selectMainDevProfile(modelsConfig.profiles);
-        await resolveOpenQuestionsWithMainDev(runDir, board, mainDevProfile, deps?.callLlm);
+        const { resolutions, usage } = await resolveOpenQuestionsWithMainDev(
+          board,
+          mainDevProfile,
+          pipelineConfig.budget,
+          deps?.callLlm
+        );
+
+        state.cost = {
+          input_tokens: state.cost.input_tokens + usage.inTok,
+          output_tokens: state.cost.output_tokens + usage.outTok,
+          est_usd: state.cost.est_usd + usage.costUsd,
+        };
+
+        const maxCostUsd = pipelineConfig.budget?.max_cost_usd;
+        if (maxCostUsd !== undefined && state.cost.est_usd >= maxCostUsd) {
+          state = {
+            ...state,
+            stages: state.stages.map((s, idx) =>
+              idx === targetIndex ? { ...s, status: "aborted", reason: "budget_exceeded" } : s
+            ),
+          };
+          writeStateAtomic(runDir, state);
+          throw new Error(
+            `Budget exceeded: main-dev resolution cost $${usage.costUsd.toFixed(4)} brings total $${state.cost.est_usd.toFixed(4)} to the limit $${maxCostUsd.toFixed(4)}`
+          );
+        }
+
+        for (const r of resolutions) {
+          resolveOpenQuestions(runDir, [r.id], r.resolution, "main_dev");
+        }
       } else if (effectiveOnUnresolved === "ask_human") {
         throw new Error(`Stage ${stageId} has unresolved open questions; resolve them before approving.`);
       }
