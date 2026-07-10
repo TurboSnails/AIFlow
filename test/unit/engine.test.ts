@@ -613,3 +613,103 @@ test("runPipelineOnce emits no budget_warning when there is no budget", async ()
     rmSync(runDir, { recursive: true, force: true });
   }
 });
+
+describe("runPipelineOnce AutonomyPolicy integration", () => {
+  const brainstormSpecPipeline = (autonomy: "interactive" | "gated" | "full"): PipelineConfig => ({
+    name: "brainstorm-spec",
+    autonomy,
+    stages: [
+      {
+        id: "ideate",
+        type: "brainstorm",
+        models: ["main-dev", "reviewer"],
+        synthesizer: "main-dev",
+      },
+      {
+        id: "specify",
+        type: "spec",
+        model: "main-dev",
+      },
+    ],
+  });
+
+  test("pauses after brainstorm under gated autonomy and does not run spec", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-autonomy-"));
+    try {
+      const brainstormRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const specRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const state = await runPipelineOnce(brainstormSpecPipeline("gated"), profiles, "/tmp/does-not-matter", runDir, {
+        runners: { brainstorm: brainstormRunner, spec: specRunner },
+      });
+
+      expect(state.stages[0].status).toBe("waiting_human");
+      expect(state.stages[1].status).toBe("pending");
+      expect(brainstormRunner).toHaveBeenCalledTimes(1);
+      expect(specRunner).not.toHaveBeenCalled();
+
+      const events = readEvents(runDir);
+      expect(events.some((e) => e.type === "stage_start" && e.stage === "ideate")).toBe(true);
+      expect(events.some((e) => e.type === "stage_done" && e.stage === "ideate" && e.result === "pass")).toBe(true);
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
+  test("runs both brainstorm and spec under full autonomy", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-autonomy-"));
+    try {
+      const brainstormRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const specRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const state = await runPipelineOnce(brainstormSpecPipeline("full"), profiles, "/tmp/does-not-matter", runDir, {
+        runners: { brainstorm: brainstormRunner, spec: specRunner },
+      });
+
+      expect(state.stages[0].status).toBe("done");
+      expect(state.stages[1].status).toBe("done");
+      expect(brainstormRunner).toHaveBeenCalledTimes(1);
+      expect(specRunner).toHaveBeenCalledTimes(1);
+
+      const events = readEvents(runDir);
+      expect(events.filter((e) => e.type === "stage_start").map((e) => (e as any).stage)).toEqual(["ideate", "specify"]);
+      expect(events.filter((e) => e.type === "stage_done").map((e) => (e as any).stage)).toEqual(["ideate", "specify"]);
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+
+  test("stage-level autonomy override takes precedence over pipeline autonomy", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-autonomy-"));
+    try {
+      const brainstormRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const specRunner = mock(async () => ({ result: "pass" as const, usage: { inTok: 10, outTok: 5, costUsd: 0.0001 } }));
+      const pipeline: PipelineConfig = {
+        name: "brainstorm-spec",
+        autonomy: "full",
+        stages: [
+          {
+            id: "ideate",
+            type: "brainstorm",
+            autonomy: "gated",
+            models: ["main-dev", "reviewer"],
+            synthesizer: "main-dev",
+          },
+          {
+            id: "specify",
+            type: "spec",
+            model: "main-dev",
+          },
+        ],
+      };
+      const state = await runPipelineOnce(pipeline, profiles, "/tmp/does-not-matter", runDir, {
+        runners: { brainstorm: brainstormRunner, spec: specRunner },
+      });
+
+      expect(state.stages[0].status).toBe("waiting_human");
+      expect(state.stages[1].status).toBe("pending");
+      expect(brainstormRunner).toHaveBeenCalledTimes(1);
+      expect(specRunner).not.toHaveBeenCalled();
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+});

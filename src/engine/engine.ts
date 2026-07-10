@@ -9,6 +9,8 @@ import { runPlanStage } from "../runners/plan";
 import { runHumanGateStage } from "../runners/human-gate";
 import { writeRunReport } from "../commands/report";
 import { createBudgetTracker, noopBudgetTracker, type BudgetTracker } from "../gate/budget";
+import { shouldPause, type Autonomy, type GatePoint, type PolicyContext } from "../policy/autonomy";
+import { readSpecBoard } from "../specboard/specboard";
 import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
@@ -149,6 +151,7 @@ export function firstResumeIndex(stages: StageState[]): number {
 
 interface StageExecutionResult {
   state: StageState;
+  result: StageOutcome["result"];
   usage?: { inTok: number; outTok: number; costUsd: number };
 }
 
@@ -159,6 +162,15 @@ const STATUS_MAP: Record<StageOutcome["result"], StageStatus> = {
   paused: "paused",
   waiting_human: "waiting_human",
   aborted: "aborted",
+};
+
+const GATE_POINTS: Record<StageConfig["type"], GatePoint> = {
+  brainstorm: "after_brainstorm",
+  spec: "after_spec",
+  ralph_loop: "after_story",
+  plan: "run_end",
+  human_gate: "run_end",
+  shell: "run_end",
 };
 
 const VALID_STAGE_STOP_REASONS = new Set<string>([
@@ -186,7 +198,7 @@ async function executeStage(
   signal: AbortSignal | undefined,
   budget: BudgetTracker,
 ): Promise<StageExecutionResult> {
-  if (signal?.aborted) return { state: { id: stage.id, status: "paused" } };
+  if (signal?.aborted) return { state: { id: stage.id, status: "paused" }, result: "paused" };
 
   const runner = deps.runners[stage.type];
   if (!runner) throw new Error(`No runner registered for stage type "${stage.type}"`);
@@ -196,6 +208,7 @@ async function executeStage(
   const entered_at = outcome.entered_at ?? stageState.entered_at;
   return {
     state: { id: stage.id, status, reason: toStageStopReason(outcome.reason), entered_at },
+    result: outcome.result,
     usage: outcome.usage,
   };
 }
@@ -295,6 +308,8 @@ export async function runPipelineOnce(
     state = { ...state, stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "running" } : s)) };
     writeStateAtomic(runDir, state);
 
+    appendEvent(runDir, { ts: nowFn().toISOString(), type: "stage_start", stage: stage.id });
+
     const budgetTracker = createBudgetTracker(state.budget?.limit_usd, state.cost.est_usd, state.budget?.warn_at_pct);
     const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal, budgetTracker);
     state = {
@@ -309,6 +324,13 @@ export async function runPipelineOnce(
         : state.cost,
     };
     writeStateAtomic(runDir, state);
+
+    appendEvent(runDir, {
+      ts: nowFn().toISOString(),
+      type: "stage_done",
+      stage: stage.id,
+      result: execResult.result,
+    });
 
     // Best-effort: state.cost is already persisted above. A crash between that
     // write and this event append can leave stage_cost events incomplete; the
@@ -347,8 +369,27 @@ export async function runPipelineOnce(
       );
     }
 
-    // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
-    if (execResult.state.status !== "done") {
+    // A completed stage may still need human approval before the engine can
+    // proceed to the next stage. If the configured autonomy requires a pause,
+    // mark the stage as waiting_human and stop the pipeline here.
+    if (execResult.state.status === "done") {
+      const effectiveAutonomy: Autonomy = stage.autonomy ?? pipeline.autonomy ?? "gated";
+      const gatePoint: GatePoint = GATE_POINTS[stage.type] ?? "run_end";
+      const board = readSpecBoard(runDir);
+      const policyCtx: PolicyContext = {
+        open_questions_count: board.open_questions.length,
+        on_unresolved: (stage as any).on_unresolved ?? (pipeline as any).on_unresolved,
+      };
+      if (shouldPause(effectiveAutonomy, gatePoint, policyCtx) === "pause") {
+        state = {
+          ...state,
+          stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "waiting_human" } : s)),
+        };
+        writeStateAtomic(runDir, state);
+        break;
+      }
+    } else {
+      // any non-"done" outcome (including "waiting_human") short-circuits the rest of the pipeline
       break;
     }
   }

@@ -12,6 +12,7 @@ import { runCost, summarizeRunCost } from "../../src/commands/cost";
 import { readRunSnapshot } from "../../src/commands/monitor";
 
 const FULL_PIPELINE = `name: full-auto
+autonomy: full
 stages:
   - id: ideate
     type: brainstorm
