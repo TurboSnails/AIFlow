@@ -52,7 +52,6 @@ export const ReviewGateConfigSchema = z.object({
     // M1 compatibility: single-reviewer model reference.
     model: z.string().optional(),
     reviewers: z.array(z.string()).min(1).max(2).optional(),
-    use_agent: z.boolean().default(false),
     fail_on: z.array(z.enum(["blocker", "major", "minor", "nit"])),
     fail_threshold: z.record(z.string(), z.number()).optional(),
     strict: z.boolean().default(false),
@@ -65,6 +64,7 @@ export const RalphLoopStageSchema = z.object({
   type: z.literal("ralph_loop"),
   model: z.string(),
   autonomy: AutonomySchema.optional(),
+  on_unresolved: z.enum(["ask_human", "main_dev_decides"]).default("ask_human"),
   per_story_fix_limit: z.number().int().positive().default(3),
   max_iterations: z.number().int().positive().default(10),
   stall_limit: z.number().int().positive().default(3),
@@ -144,6 +144,7 @@ export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 export const PipelineConfigSchema = z.object({
   name: z.string(),
   autonomy: AutonomySchema.default("gated"),
+  on_unresolved: z.enum(["ask_human", "main_dev_decides"]).default("ask_human"),
   isolation: z.enum(["none", "worktree"]).optional(),
   budget: BudgetConfigSchema.optional(),
   stages: z.array(StageConfigSchema).min(1),
@@ -153,6 +154,7 @@ export type PipelineConfig = z.infer<typeof PipelineConfigSchema>;
 export const ProjectConfigSchema = z.object({
   max_drift_files: z.number().int().positive().default(50),
   default_checks: z.array(z.string()).optional(),
+  on_unresolved: z.enum(["ask_human", "main_dev_decides"]).default("ask_human"),
   dashboard: z
     .object({
       port: z.number().int().positive().default(3000),

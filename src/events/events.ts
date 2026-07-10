@@ -51,7 +51,7 @@ export interface GateResultAiflowEvent {
   checks: "pass" | "fail";
   ai_review: "pass" | "fail" | "skipped";
   blockers: number;
-  reason?: "config_tampered" | "spec_tampered" | "config_and_spec_tampered";
+  reason?: "config_tampered" | "spec_tampered" | "config_and_spec_tampered" | "max_drift_exceeded";
 }
 
 export interface StoryResultAiflowEvent {
