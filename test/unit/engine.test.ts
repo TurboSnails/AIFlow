@@ -712,4 +712,39 @@ describe("runPipelineOnce AutonomyPolicy integration", () => {
       rmSync(runDir, { recursive: true, force: true });
     }
   });
+
+  test("interactive autonomy pauses after a ralph_loop stage and records autonomy_pause reason", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-autonomy-interactive-"));
+    try {
+      const interactivePipeline: PipelineConfig = {
+        name: "ralph-interactive",
+        autonomy: "interactive",
+        stages: [
+          {
+            id: "develop",
+            type: "ralph_loop",
+            model: "main-dev",
+            per_story_fix_limit: 3,
+            max_iterations: 10,
+            stall_limit: 3,
+            auto_clean: false,
+            gate: { checks: [], ai_review: { enabled: false, model: "reviewer", fail_on: ["blocker"] } },
+          },
+        ],
+      };
+      const ralphLoop = mock(async () => ({
+        result: "pass" as const,
+        usage: { inTok: 10, outTok: 5, costUsd: 0.0001 },
+      }));
+      const state = await runPipelineOnce(interactivePipeline, profiles, "/tmp/does-not-matter", runDir, {
+        runners: { ralph_loop: ralphLoop },
+      });
+
+      expect(state.stages[0].status).toBe("waiting_human");
+      expect(state.stages[0].reason).toBe("autonomy_pause");
+      expect(ralphLoop).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
+  });
 });

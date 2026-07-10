@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const AutonomySchema = z.enum(["interactive", "gated", "full"]);
+
 export const PriceSchema = z.object({
   in_per_m: z.number().nonnegative(),
   out_per_m: z.number().nonnegative(),
@@ -62,7 +64,7 @@ export const RalphLoopStageSchema = z.object({
   id: z.string(),
   type: z.literal("ralph_loop"),
   model: z.string(),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   per_story_fix_limit: z.number().int().positive().default(3),
   max_iterations: z.number().int().positive().default(10),
   stall_limit: z.number().int().positive().default(3),
@@ -74,7 +76,7 @@ export type RalphLoopStageConfig = z.infer<typeof RalphLoopStageSchema>;
 export const BrainstormStageSchema = z.object({
   id: z.string(),
   type: z.literal("brainstorm"),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   models: z.array(z.string()).min(2),
   mode: z.enum(["independent", "debate"]).default("independent"),
   debate_rounds: z.number().int().positive().default(2),
@@ -86,7 +88,7 @@ export type BrainstormStageConfig = z.infer<typeof BrainstormStageSchema>;
 export const SpecStageSchema = z.object({
   id: z.string(),
   type: z.literal("spec"),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   model: z.string(),
   output: z.string().default("spec.md"),
 });
@@ -95,7 +97,7 @@ export type SpecStageConfig = z.infer<typeof SpecStageSchema>;
 export const PlanStageSchema = z.object({
   id: z.string(),
   type: z.literal("plan"),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   model: z.string(),
   input: z.string().default("spec.md"),
   output: z.string().default("prd.json"),
@@ -105,7 +107,7 @@ export type PlanStageConfig = z.infer<typeof PlanStageSchema>;
 export const HumanGateStageSchema = z.object({
   id: z.string(),
   type: z.literal("human_gate"),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   prompt: z.string(),
   timeout: z.number().int().positive().optional(),
   on_timeout: z.enum(["approve", "abort"]).default("abort"),
@@ -115,7 +117,7 @@ export type HumanGateStageConfig = z.infer<typeof HumanGateStageSchema>;
 export const ShellStageSchema = z.object({
   id: z.string(),
   type: z.literal("shell"),
-  autonomy: z.enum(["interactive", "gated", "full"]).optional(),
+  autonomy: AutonomySchema.optional(),
   command: z.string(),
   on_failure: z.enum(["fail", "continue"]).default("fail"),
 });
@@ -141,7 +143,7 @@ export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
 export const PipelineConfigSchema = z.object({
   name: z.string(),
-  autonomy: z.enum(["interactive", "gated", "full"]).default("gated"),
+  autonomy: AutonomySchema.default("gated"),
   isolation: z.enum(["none", "worktree"]).optional(),
   budget: BudgetConfigSchema.optional(),
   stages: z.array(StageConfigSchema).min(1),

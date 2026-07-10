@@ -378,12 +378,11 @@ export async function runPipelineOnce(
       const board = readSpecBoard(runDir);
       const policyCtx: PolicyContext = {
         open_questions_count: board.open_questions.length,
-        on_unresolved: (stage as any).on_unresolved ?? (pipeline as any).on_unresolved,
       };
       if (shouldPause(effectiveAutonomy, gatePoint, policyCtx) === "pause") {
         state = {
           ...state,
-          stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "waiting_human" } : s)),
+          stages: state.stages.map((s, idx) => (idx === i ? { ...s, status: "waiting_human", reason: "autonomy_pause" } : s)),
         };
         writeStateAtomic(runDir, state);
         break;
