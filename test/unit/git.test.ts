@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { revParseHead, stageAll, diffCached, commit, isClean, checkoutClean, checkoutConfigOnly } from "../../src/git";
+import { revParseHead, stageAll, diffCached, diffConflictFileNames, diffFilesSinceMergeBase, commit, isClean, checkoutClean, checkoutConfigOnly } from "../../src/git";
 
 async function makeTempRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-git-test-"));
@@ -166,6 +166,56 @@ test("checkoutConfigOnly restores .aiflow/config to HEAD without touching other 
     expect(configContent).toBe("profiles: {}\n");
     const aContent = await Bun.file(join(dir, "a.txt")).text();
     expect(aContent).toBe("also changed\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("diffConflictFileNames returns unmerged files during an active merge conflict", async () => {
+  const dir = await makeTempRepo();
+  try {
+    await $`git -C ${dir} checkout -b branch-a`;
+    writeFileSync(join(dir, "a.txt"), "branch-a\n");
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "branch-a"`;
+    await $`git -C ${dir} checkout -`;
+
+    // Diverge the main branch so the merge cannot fast-forward and must conflict.
+    writeFileSync(join(dir, "a.txt"), "main\n");
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "main change"`;
+
+    // Start a merge that will conflict and leave it in progress.
+    const mergeResult = await $`git -C ${dir} merge branch-a`.nothrow().quiet();
+    expect(mergeResult.exitCode).not.toBe(0);
+
+    const names = await diffConflictFileNames(dir);
+    expect(names).toEqual(["a.txt"]);
+
+    await $`git -C ${dir} merge --abort`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("diffFilesSinceMergeBase returns files changed on main since the merge base", async () => {
+  const dir = await makeTempRepo();
+  try {
+    await $`git -C ${dir} checkout -b feature`;
+    writeFileSync(join(dir, "feature.txt"), "feature\n");
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "feature"`;
+    await $`git -C ${dir} checkout -`;
+
+    writeFileSync(join(dir, "main-a.txt"), "a\n");
+    writeFileSync(join(dir, "main-b.txt"), "b\n");
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "main changes"`;
+
+    const files = await diffFilesSinceMergeBase(dir, "feature");
+    expect(files).toContain("main-a.txt");
+    expect(files).toContain("main-b.txt");
+    expect(files).not.toContain("feature.txt");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

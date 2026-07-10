@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { runCommand } from "../../src/commands/run";
+import { readEvents } from "../../src/events/events";
 
 async function setupProject(pipelineYaml: string): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-run-multi-"));
@@ -127,15 +128,84 @@ test("runCommand starts normally when a ralph_loop stage has auto_clean:true and
   }
 });
 
-test("runCommand starts normally when the working tree is dirty but no stage has auto_clean:true", async () => {
+test("runCommand emits worktree conflict and merge_conflict_unarbitrable events when merge conflicts", async () => {
   const dir = await setupProject(
-    `name: test-pipeline\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+    `name: test-pipeline\nisolation: worktree\nautonomy: gated\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
   );
   try {
-    writeFileSync(join(dir, "dirty.txt"), "uncommitted\n");
-    writeFileSync(join(dir, "prd.json"), JSON.stringify({ branchName: "x", stories: [] }));
-    const state = await runCommand(dir, "test-pipeline");
+    writeFileSync(
+      join(dir, "prd.json"),
+      JSON.stringify({ branchName: "x", stories: [{ id: "US-1", title: "t", acceptance: [], priority: 1, passes: false, fixCount: 0 }] })
+    );
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "add prd.json"`;
+
+    const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run-1" };
+    const agent = async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 0, outTok: 0, costUsd: 0 } });
+    const state = await runCommand(
+      dir,
+      "test-pipeline",
+      {
+        runAgentTask: agent,
+        createWorktree: async () => ctx,
+        removeWorktree: async () => {},
+        tryMergeBack: async () => "conflict",
+        resolveConflict: async () => "aborted",
+        diffConflictFileNames: async () => ["src/a.ts", "src/b.ts"],
+      },
+      {},
+      undefined,
+      "run-1"
+    );
+
     expect(state.stages[0].status).toBe("done");
+    const events = readEvents(join(dir, ".aiflow", "runs", state.run_id));
+    const conflictEvents = events.filter((e) => e.type === "worktree" && (e as any).action === "conflict");
+    expect(conflictEvents).toHaveLength(1);
+    const mergeEvents = events.filter((e) => e.type === "merge_conflict_unarbitrable");
+    expect(mergeEvents).toHaveLength(1);
+    expect((mergeEvents[0] as any).files).toEqual(["src/a.ts", "src/b.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runCommand emits worktree conflict and merge_conflict_unarbitrable events with drifted files", async () => {
+  const dir = await setupProject(
+    `name: test-pipeline\nisolation: worktree\nautonomy: gated\nstages:\n  - id: develop\n    type: ralph_loop\n    model: main-dev\n    gate:\n      checks: []\n      ai_review:\n        enabled: false\n        model: reviewer\n        fail_on: ["blocker"]\n`
+  );
+  try {
+    writeFileSync(
+      join(dir, "prd.json"),
+      JSON.stringify({ branchName: "x", stories: [{ id: "US-1", title: "t", acceptance: [], priority: 1, passes: false, fixCount: 0 }] })
+    );
+    await $`git -C ${dir} add -A`;
+    await $`git -C ${dir} commit -q -m "add prd.json"`;
+
+    const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run-1" };
+    const agent = async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 0, outTok: 0, costUsd: 0 } });
+    const state = await runCommand(
+      dir,
+      "test-pipeline",
+      {
+        runAgentTask: agent,
+        createWorktree: async () => ctx,
+        removeWorktree: async () => {},
+        tryMergeBack: async () => "drift",
+        diffFilesSinceMergeBase: async () => ["main/a.ts", "main/b.ts"],
+      },
+      {},
+      undefined,
+      "run-1"
+    );
+
+    expect(state.stages[0].status).toBe("done");
+    const events = readEvents(join(dir, ".aiflow", "runs", state.run_id));
+    const conflictEvents = events.filter((e) => e.type === "worktree" && (e as any).action === "conflict");
+    expect(conflictEvents).toHaveLength(1);
+    const mergeEvents = events.filter((e) => e.type === "merge_conflict_unarbitrable");
+    expect(mergeEvents).toHaveLength(1);
+    expect((mergeEvents[0] as any).files).toEqual(["main/a.ts", "main/b.ts"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

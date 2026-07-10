@@ -80,12 +80,13 @@ describe("tryMergeBack", () => {
     const { deps, calls } = makeDeps();
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
-    const result = await tryMergeBack(ctx, "gated", deps);
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
 
     expect(result).toBe("merged");
-    expect(calls).toHaveLength(1);
-    expect(calls[0].cwd).toBe("/repo");
-    expect(calls[0].args).toEqual(["merge", "--no-ff", ctx.branch]);
+    expect(calls).toHaveLength(3);
+    expect(calls[0].args).toEqual(["merge-base", "HEAD", ctx.branch]);
+    expect(calls[1].args).toEqual(["diff", "--name-only", expect.stringContaining("..")]);
+    expect(calls[2].args).toEqual(["merge", "--no-ff", ctx.branch]);
   });
 
   test("returns conflict when merge fails", async () => {
@@ -94,9 +95,48 @@ describe("tryMergeBack", () => {
     });
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
-    const result = await tryMergeBack(ctx, "gated", deps);
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
 
     expect(result).toBe("conflict");
+  });
+
+  test("returns drift when main branch has changed more than maxDriftFiles since merge base", async () => {
+    const { deps, calls } = makeDeps();
+    const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
+    deps.runGit = async (cwd, args) => {
+      calls.push({ cwd, args });
+      if (args[0] === "merge-base") {
+        return { exitCode: 0, stdout: "base123\n", stderr: "" };
+      }
+      if (args[0] === "diff" && args[1] === "--name-only") {
+        const files = Array.from({ length: 51 }, (_, i) => `file-${i}.txt`).join("\n");
+        return { exitCode: 0, stdout: `${files}\n`, stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "" };
+    };
+
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
+
+    expect(result).toBe("drift");
+    expect(calls.some((c) => c.args[0] === "merge")).toBe(false);
+  });
+
+  test("attempts merge when drift is within maxDriftFiles", async () => {
+    const { deps, calls } = makeDeps();
+    const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
+    deps.runGit = async (cwd, args) => {
+      calls.push({ cwd, args });
+      if (args[0] === "merge-base") return { exitCode: 0, stdout: "base123\n", stderr: "" };
+      if (args[0] === "diff" && args[1] === "--name-only") {
+        return { exitCode: 0, stdout: "a.txt\nb.txt\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
+
+    expect(result).toBe("merged");
+    expect(calls.some((c) => c.args[0] === "merge" && c.args[1] === "--no-ff")).toBe(true);
   });
 });
 
@@ -135,6 +175,17 @@ describe("removeWorktree", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0].args).toEqual(["worktree", "remove", ctx.worktreePath]);
     expect(calls[1].args).toEqual(["branch", "-D", ctx.branch]);
+  });
+
+  test("does not throw when git commands fail", async () => {
+    const { deps } = makeDeps({
+      runGit: async () => {
+        throw new Error("git crashed");
+      },
+    });
+    const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
+
+    await expect(removeWorktree(ctx, deps)).resolves.toBeUndefined();
   });
 });
 

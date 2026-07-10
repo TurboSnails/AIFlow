@@ -19,7 +19,7 @@ import {
   llmRetryContext,
   type ReviewerCallResult,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, diffCachedFileNames, commit, checkoutClean, checkoutConfigOnly } from "../git";
+import { revParseHead, stageAll, diffCached, diffCachedFileNames, diffConflictFileNames, diffFilesSinceMergeBase, commit, checkoutClean, checkoutConfigOnly } from "../git";
 import { assertCleanIfAutoClean } from "./dirty-guard";
 import {
   createWorktree as realCreateWorktree,
@@ -46,6 +46,14 @@ export interface RunCommandOverrides {
   callLlmFanOut?: typeof realCallLlmFanOut;
   createWorktree?: (cwd: string, runId: string) => Promise<WorktreeContext>;
   removeWorktree?: (ctx: WorktreeContext) => Promise<void>;
+  tryMergeBack?: (
+    ctx: WorktreeContext,
+    autonomy: string,
+    maxDriftFiles?: number
+  ) => Promise<"merged" | "conflict" | "skipped" | "drift">;
+  resolveConflict?: (ctx: WorktreeContext) => Promise<"aborted" | "failed">;
+  diffConflictFileNames?: (cwd: string) => Promise<string[]>;
+  diffFilesSinceMergeBase?: (cwd: string, branch: string) => Promise<string[]>;
 }
 
 export interface RequirementInput {
@@ -218,7 +226,11 @@ export async function runCommand(
             branch: worktreeCtx.branch,
             path: worktreeCtx.worktreePath,
           });
-          const mergeResult = await tryMergeBack(worktreeCtx, pipelineAutonomy);
+          const mergeFn = overrides.tryMergeBack ?? tryMergeBack;
+          const resolveFn = overrides.resolveConflict ?? resolveConflict;
+          const conflictFilesFn = overrides.diffConflictFileNames ?? diffConflictFileNames;
+          const driftFilesFn = overrides.diffFilesSinceMergeBase ?? diffFilesSinceMergeBase;
+          const mergeResult = await mergeFn(worktreeCtx, pipelineAutonomy, projectConfig.max_drift_files);
           if (mergeResult === "merged") {
             appendEvent(runDir, {
               ts: new Date().toISOString(),
@@ -227,16 +239,36 @@ export async function runCommand(
               branch: worktreeCtx.branch,
               path: worktreeCtx.worktreePath,
             });
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "worktree",
+              action: "remove",
+              branch: worktreeCtx.branch,
+              path: worktreeCtx.worktreePath,
+            });
             const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
             await removeWorktree(worktreeCtx);
             worktreeHandled = true;
-          } else if (mergeResult === "conflict") {
-            await resolveConflict(worktreeCtx);
+          } else if (mergeResult === "conflict" || mergeResult === "drift") {
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "worktree",
+              action: "conflict",
+              branch: worktreeCtx.branch,
+              path: worktreeCtx.worktreePath,
+            });
+            const files =
+              mergeResult === "drift"
+                ? await driftFilesFn(worktreeCtx.originalCwd, worktreeCtx.branch)
+                : await conflictFilesFn(worktreeCtx.originalCwd);
+            if (mergeResult === "conflict") {
+              await resolveFn(worktreeCtx);
+            }
             appendEvent(runDir, {
               ts: new Date().toISOString(),
               type: "merge_conflict_unarbitrable",
               stage: pipelineConfig.stages[pipelineConfig.stages.length - 1]?.id ?? "run",
-              files: [],
+              files,
             });
             worktreeHandled = true;
             // Leave the worktree and branch in place so the user can resolve manually.
@@ -249,6 +281,13 @@ export async function runCommand(
   } finally {
     if (worktreeCtx && !worktreeHandled) {
       const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+      appendEvent(runDir, {
+        ts: new Date().toISOString(),
+        type: "worktree",
+        action: "remove",
+        branch: worktreeCtx.branch,
+        path: worktreeCtx.worktreePath,
+      });
       try {
         await removeWorktree(worktreeCtx);
       } catch {

@@ -42,3 +42,26 @@ export async function checkoutConfigOnly(cwd: string): Promise<void> {
   if (exitCode !== 0) return;
   await $`git -C ${cwd} checkout HEAD -- .aiflow/config`.quiet();
 }
+
+export async function diffConflictFileNames(cwd: string): Promise<string[]> {
+  const result = await $`git -C ${cwd} diff --name-only --diff-filter=U`.nothrow().quiet();
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .toString("utf-8")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export async function diffFilesSinceMergeBase(cwd: string, branch: string): Promise<string[]> {
+  const baseResult = await $`git -C ${cwd} merge-base HEAD ${branch}`.nothrow().quiet();
+  if (baseResult.exitCode !== 0) return [];
+  const base = baseResult.stdout.toString("utf-8").trim();
+  const diffResult = await $`git -C ${cwd} diff --name-only ${base}..HEAD`.nothrow().quiet();
+  if (diffResult.exitCode !== 0) return [];
+  return diffResult.stdout
+    .toString("utf-8")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
