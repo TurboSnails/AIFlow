@@ -1,0 +1,33 @@
+name: full-auto
+autonomy: full
+stages:
+  - id: brainstorm
+    type: brainstorm
+    mode: independent
+    models:
+      - model-a
+      - model-b
+    synthesizer: main-dev
+    output: brainstorm-report.md
+  - id: spec
+    type: spec
+    model: main-dev
+    output: spec.md
+  - id: plan
+    type: plan
+    model: main-dev
+    input: spec.md
+    output: prd.json
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    per_story_fix_limit: 2
+    gate:
+      checks: []
+      ai_review:
+        enabled: false
+        model: reviewer
+        fail_on: ["blocker"]
+        fail_threshold:
+          major: 3
+        strict: false

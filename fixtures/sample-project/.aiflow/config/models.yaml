@@ -9,3 +9,11 @@ profiles:
     model: MiniMax-M3
     base_url: https://api.minimaxi.com/v1
     api_key_env: MINIMAX_API_KEY
+  model-a:
+    channel: opencode
+    provider: minimax-cn
+    model: MiniMax-M3
+  model-b:
+    channel: opencode
+    provider: minimax-cn
+    model: MiniMax-M3
