@@ -30,7 +30,7 @@ test("listTools exposes expected aiflow tools", () => {
   expect(names).toContain("aiflow_status");
   expect(names).toContain("aiflow_run");
   expect(names).toContain("aiflow_brainstorm");
-  expect(names).toContain("aiflow_review_diff");
+  expect(names).not.toContain("aiflow_review_diff");
 });
 
 test("run tool invokes aiflow with --pipeline", async () => {
@@ -57,16 +57,4 @@ test("brainstorm tool invokes aiflow with --pipeline and --requirement", async (
   expect(capturedArgs).toContain("--requirement");
   expect(capturedArgs).toContain("Build a widget");
   expect(result.content[0].text).toContain("ok");
-});
-
-test("review_diff tool invokes aiflow report --run-id", async () => {
-  let capturedArgs: string[] = [];
-  const result = await handleToolCall("aiflow_review_diff", { runId: "20260101_120000" }, "/tmp", {
-    spawnCli: async (_cwd, args) => {
-      capturedArgs = args;
-      return { exitCode: 0, stdout: "# Run report\n", stderr: "" };
-    },
-  });
-  expect(capturedArgs).toEqual(["report", "--run-id", "20260101_120000"]);
-  expect(result.content[0].text).toContain("Run report");
 });

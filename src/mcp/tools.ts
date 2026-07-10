@@ -56,12 +56,6 @@ export async function handleToolCall(
       const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["run", "--pipeline", pipeline, "--requirement", prompt]);
       return textResponse(stdout || stderr || `aiflow brainstorm exited ${exitCode}`);
     }
-    case "aiflow_review_diff": {
-      const runId = String(args.runId ?? "");
-      if (!runId) return textResponse("Missing required argument: runId");
-      const { stdout, stderr, exitCode } = await deps.spawnCli(cwd, ["report", "--run-id", runId]);
-      return textResponse(stdout || stderr || `aiflow report exited ${exitCode}`);
-    }
     default:
       return textResponse(`Unknown tool: ${name}`);
   }
@@ -93,15 +87,6 @@ export function listTools(): Array<{ name: string; description: string; inputSch
         type: "object",
         properties: { prompt: { type: "string", description: "Brainstorm prompt" } },
         required: ["prompt"],
-      },
-    },
-    {
-      name: "aiflow_review_diff",
-      description: "Generate a review diff report for a run.",
-      inputSchema: {
-        type: "object",
-        properties: { runId: { type: "string", description: "Run id" } },
-        required: ["runId"],
       },
     },
   ];
