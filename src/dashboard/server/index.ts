@@ -13,7 +13,7 @@ export interface DashboardServer {
 export async function startDashboardServer(
   runsRoot: string,
   dbPath: string,
-  port = 8080,
+  port = 3000,
   host = "127.0.0.1",
 ): Promise<DashboardServer> {
   const db = createDb(dbPath);

@@ -359,7 +359,7 @@ program
 program
   .command("dashboard")
   .description("Start the AIFlow web dashboard")
-  .option("--port <n>", "port to bind the dashboard server", (v) => Number(v), 8080)
+  .option("--port <n>", "port to bind the dashboard server", (v) => Number(v), 3000)
   .action(async (opts: { port: number }) => {
     const { runDashboard } = await import("./commands/dashboard");
     const server = await runDashboard(process.cwd(), opts.port);
