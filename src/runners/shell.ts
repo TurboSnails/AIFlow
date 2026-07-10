@@ -14,10 +14,23 @@ export async function runShellStage(
   _signal: AbortSignal | undefined,
   _budget: BudgetTracker = noopBudgetTracker
 ): Promise<StageOutcome> {
-  const { exitCode, stdout, stderr } = await $`sh -c ${stageConfig.command}`
+  if (_signal?.aborted) {
+    throw new Error("signal aborted before shell stage started");
+  }
+
+  // Bun's shell API does not expose a public AbortSignal hook on this runtime
+  // version, so mid-flight abort is not supported. If a future version adds
+  // $.signal(), wire it here; otherwise we already rejected an already-aborted
+  // signal above.
+  const shellPromise = $`sh -c ${stageConfig.command}`
     .cwd(cwd)
     .nothrow()
     .quiet();
+  if (typeof (shellPromise as any).signal === "function") {
+    (shellPromise as any).signal(_signal);
+  }
+
+  const { exitCode, stdout, stderr } = await shellPromise;
   const ok = stageConfig.on_failure === "continue" || exitCode === 0;
   return {
     result: ok ? "pass" : "fail",

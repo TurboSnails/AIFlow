@@ -12,7 +12,7 @@ import { writeRunReport } from "../commands/report";
 import { createBudgetTracker, noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import { shouldPause, type Autonomy, type GatePoint, type PolicyContext } from "../policy/autonomy";
 import { readSpecBoard } from "../specboard/specboard";
-import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig } from "../config/schema";
+import type { PipelineConfig, ModelProfile, StageConfig, RalphLoopStageConfig, ShellStageConfig } from "../config/schema";
 import type { BrainstormStageConfig, SpecStageConfig, PlanStageConfig, HumanGateStageConfig } from "../config/schema";
 
 export interface StageOutcome {
@@ -118,7 +118,7 @@ async function adaptHumanGate(
 
 async function adaptShell(...args: Parameters<StageRunnerFn>) {
   const [stageConfig, stageState, profiles, cwd, runDir, nowFn, signal, budget] = args;
-  return runShellStage(stageConfig as import("../config/schema").ShellStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, budget);
+  return runShellStage(stageConfig as ShellStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, budget);
 }
 
 const defaultDeps: EngineDeps = {
@@ -136,6 +136,15 @@ const defaultDeps: EngineDeps = {
     writeRunReport(runDir, state, events, { now, startedAt });
   },
 };
+
+export function resolvePipelineDefaults(
+  pipeline: PipelineConfig,
+  overrides?: { autonomy?: Autonomy; isolation?: NonNullable<PipelineConfig["isolation"]> }
+): { autonomy: Autonomy; isolation: NonNullable<PipelineConfig["isolation"]> } {
+  const autonomy = overrides?.autonomy ?? pipeline.autonomy ?? "gated";
+  const isolation = overrides?.isolation ?? pipeline.isolation ?? (autonomy === "full" ? "worktree" : "none");
+  return { autonomy, isolation };
+}
 
 export const TERMINAL_STATUSES: ReadonlySet<StageStatus> = new Set([
   "done",
@@ -233,6 +242,10 @@ export interface RunPipelineOptions {
   on_unresolved?: "ask_human" | "main_dev_decides";
   /** Runtime worktree context created by the run command; stored on the initial state. */
   worktree?: { path: string; branch: string };
+  /** Effective autonomy for the run; if omitted, the pipeline/config defaults are applied. */
+  autonomy?: Autonomy;
+  /** Effective isolation for the run; if omitted, the pipeline/config defaults are applied. */
+  isolation?: NonNullable<PipelineConfig["isolation"]>;
 }
 
 /**
@@ -264,12 +277,16 @@ export async function runPipelineOnce(
   if (opts.resume) {
     state = readState(runDir);
   } else {
+    const { autonomy: effectiveAutonomy, isolation: effectiveIsolation } = resolvePipelineDefaults(pipeline, {
+      autonomy: opts.autonomy,
+      isolation: opts.isolation,
+    });
     state = {
       run_id: runDir.split("/").pop() ?? "unknown",
       pipeline: pipeline.name,
       requirement: opts.requirement,
-      autonomy: pipeline.autonomy ?? "gated",
-      isolation: pipeline.isolation ?? (pipeline.autonomy === "full" ? "worktree" : "none"),
+      autonomy: effectiveAutonomy,
+      isolation: effectiveIsolation,
       ...(opts.worktree ? { worktree: opts.worktree } : {}),
       stages: pipeline.stages.map((s) => ({ id: s.id, status: "pending" as StageStatus })),
       cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
