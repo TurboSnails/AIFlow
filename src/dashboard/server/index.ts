@@ -14,6 +14,7 @@ export async function startDashboardServer(
   runsRoot: string,
   dbPath: string,
   port = 8080,
+  host = "127.0.0.1",
 ): Promise<DashboardServer> {
   const db = createDb(dbPath);
   const app = createApp({ db, runsRoot });
@@ -25,13 +26,13 @@ export async function startDashboardServer(
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, () => resolve());
+    server.listen(port, host, () => resolve());
   });
 
   const address = server.address() as { port: number };
 
   return {
-    url: `http://localhost:${address.port}`,
+    url: `http://${host}:${address.port}`,
     close: async () => {
       await collector.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
