@@ -1,6 +1,14 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
+import { z } from "zod";
+
+export const DashboardEventSchema = z.object({
+  ts: z.string(),
+  type: z.string(),
+}).passthrough();
+
+export type DashboardEvent = z.infer<typeof DashboardEventSchema>;
 
 export function createDb(path: string): Database {
   const db = new Database(path);
@@ -41,27 +49,38 @@ export function ingestEvents(db: Database, runDir: string): void {
     return;
   }
   const lines = text.split("\n").filter((line) => line.trim() !== "");
-  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>) => {
+  ingestLines(db, runId, lines);
+}
+
+function ingestLines(db: Database, runId: string, lines: string[]): void {
+  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>, cursorRunId: string, cursorOffset: number) => {
     const stmt = db.prepare("INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)");
     for (const row of rows) {
-      stmt.run(runId, row.ts, row.type, row.payload);
+      stmt.run(cursorRunId, row.ts, row.type, row.payload);
     }
+    setCursor(db, cursorRunId, cursorOffset);
   });
   const rows: Array<{ ts: string; type: string; payload: string }> = [];
   for (const line of lines) {
-    let event: Record<string, unknown>;
-    try {
-      event = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const ts = String(event.ts ?? "");
-    const type = String(event.type ?? "");
-    rows.push({ ts, type, payload: line });
+    const parsed = parseEventLine(line);
+    if (!parsed) continue;
+    rows.push(parsed);
   }
   if (rows.length > 0) {
-    insert(rows);
+    insert(rows, runId, 0);
   }
+}
+
+function parseEventLine(line: string): { ts: string; type: string; payload: string } | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const result = DashboardEventSchema.safeParse(raw);
+  if (!result.success) return null;
+  return { ts: result.data.ts, type: result.data.type, payload: line };
 }
 
 export function tailRun(db: Database, runDir: string, cursor?: number): { cursor: number; ingested: number } {
@@ -71,10 +90,11 @@ export function tailRun(db: Database, runDir: string, cursor?: number): { cursor
   try {
     size = statSync(eventsPath).size;
   } catch {
-    return { cursor: cursor ?? 0, ingested: 0 };
+    return { cursor: cursor ?? getCursor(db, runId), ingested: 0 };
   }
   const start = cursor ?? getCursor(db, runId);
   if (start >= size) {
+    setCursor(db, runId, size);
     return { cursor: size, ingested: 0 };
   }
   let chunk: Buffer;
@@ -85,29 +105,25 @@ export function tailRun(db: Database, runDir: string, cursor?: number): { cursor
   }
   const text = chunk.toString("utf-8");
   const lines = text.split("\n").filter((line) => line.trim() !== "");
-  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>) => {
+  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>, cursorRunId: string, cursorOffset: number) => {
     const stmt = db.prepare("INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)");
     for (const row of rows) {
-      stmt.run(runId, row.ts, row.type, row.payload);
+      stmt.run(cursorRunId, row.ts, row.type, row.payload);
     }
+    setCursor(db, cursorRunId, cursorOffset);
   });
   const rows: Array<{ ts: string; type: string; payload: string }> = [];
   for (const line of lines) {
-    let event: Record<string, unknown>;
-    try {
-      event = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const ts = String(event.ts ?? "");
-    const type = String(event.type ?? "");
-    rows.push({ ts, type, payload: line });
-  }
-  if (rows.length > 0) {
-    insert(rows);
+    const parsed = parseEventLine(line);
+    if (!parsed) continue;
+    rows.push(parsed);
   }
   const nextCursor = start + Buffer.byteLength(text, "utf-8");
-  setCursor(db, runId, nextCursor);
+  if (rows.length > 0) {
+    insert(rows, runId, nextCursor);
+  } else {
+    setCursor(db, runId, nextCursor);
+  }
   return { cursor: nextCursor, ingested: rows.length };
 }
 

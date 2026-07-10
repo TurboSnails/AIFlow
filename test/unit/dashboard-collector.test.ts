@@ -68,6 +68,38 @@ test("collector ingests new events on file change", async () => {
   await collector.close();
 });
 
+test("tailRun updates cursor when file has not grown", () => {
+  const db = createDb(":memory:");
+  const runDir = mkdtempSync(join(tmpdir(), "dash-"));
+  const path = join(runDir, "events.jsonl");
+  writeFileSync(path, JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }) + "\n");
+  const first = tailRun(db, runDir);
+  expect(first.ingested).toBe(1);
+  const second = tailRun(db, runDir, first.cursor);
+  expect(second.cursor).toBe(first.cursor);
+  expect(second.ingested).toBe(0);
+});
+
+test("ignores malformed event lines", () => {
+  const db = createDb(":memory:");
+  const runDir = mkdtempSync(join(tmpdir(), "dash-"));
+  const runId = basename(runDir);
+  const path = join(runDir, "events.jsonl");
+  writeFileSync(
+    path,
+    [
+      JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }),
+      "not-json",
+      JSON.stringify({ missing: "fields" }),
+      JSON.stringify({ ts: "2026-07-10T00:00:01Z", type: "stage_done" }),
+    ].join("\n") + "\n"
+  );
+  ingestEvents(db, runDir);
+  const events = getEventsForRun(db, runId);
+  expect(events.length).toBe(2);
+  expect(events.map((e) => e.type)).toEqual(["stage_start", "stage_done"]);
+});
+
 function basename(p: string): string {
   const idx = p.lastIndexOf("/");
   return idx < 0 ? p : p.slice(idx + 1);

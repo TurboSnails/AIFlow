@@ -1,5 +1,6 @@
 import chokidar from "chokidar";
 import type { WatchOptions } from "chokidar";
+import { basename, dirname } from "node:path";
 import { createDb, tailRun } from "./db";
 
 export interface Collector {
@@ -7,11 +8,7 @@ export interface Collector {
 }
 
 function isEventsJsonl(path: string): boolean {
-  return path.endsWith("/events.jsonl");
-}
-
-function runDirFromEventsPath(path: string): string {
-  return path.slice(0, -"/events.jsonl".length);
+  return basename(path) === "events.jsonl";
 }
 
 export function startCollector(runsRoot: string, dbPath: string, options?: WatchOptions): Collector {
@@ -26,7 +23,7 @@ export function startCollector(runsRoot: string, dbPath: string, options?: Watch
 
   const ingest = (eventsPath: string) => {
     if (!isEventsJsonl(eventsPath)) return;
-    const runDir = runDirFromEventsPath(eventsPath);
+    const runDir = dirname(eventsPath);
     tailRun(db, runDir);
   };
 
