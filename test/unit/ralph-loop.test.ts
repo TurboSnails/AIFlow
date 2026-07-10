@@ -786,6 +786,132 @@ test("a failed agent call still records its cost in the budget tracker (without 
   }
 });
 
+test("ralph loop reads specboard and checks spec hash before and after agent call", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const specPath = join(cwd, "spec.md");
+    writeFileSync(specPath, "original spec");
+    const specBoard = {
+      requirement: "req",
+      artifacts: { spec: "spec.md" },
+      spec_hash: "hash-before",
+      open_questions: [],
+      decisions: [],
+      review_matrix: {},
+    };
+    const readSpecBoard = mock(() => specBoard);
+    const hashSpecFile = mock(() => "hash-before");
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+      readSpecBoard,
+      hashSpecFile,
+    });
+
+    expect(result.result).toBe("pass");
+    expect(readSpecBoard).toHaveBeenCalledWith(runDir);
+    expect(hashSpecFile).toHaveBeenCalledTimes(2);
+    expect(hashSpecFile.mock.calls[0][0]).toBe(specPath);
+    expect(hashSpecFile.mock.calls[1][0]).toBe(specPath);
+    expect(runReviewGate).toHaveBeenCalledTimes(1);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("spec tamper is restored and iteration fails", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const specPath = join(cwd, "spec.md");
+    writeFileSync(specPath, "original spec content");
+    const specBoard = {
+      requirement: "req",
+      artifacts: { spec: "spec.md" },
+      spec_hash: "hash-before",
+      open_questions: [],
+      decisions: [],
+      review_matrix: {},
+    };
+    const readSpecBoard = mock(() => specBoard);
+    let hashCall = 0;
+    const hashSpecFile = mock(() => {
+      hashCall += 1;
+      return hashCall === 1 ? "hash-before" : "hash-after-different";
+    });
+    const runAgentTask = mock(async () => {
+      writeFileSync(specPath, "tampered content");
+      return { ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } };
+    });
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const result = await runRalphLoopOnce(stageConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+      readSpecBoard,
+      hashSpecFile,
+    });
+
+    expect(result.result).toBe("fail");
+    expect(runReviewGate).not.toHaveBeenCalled();
+    expect(git.checkoutConfigOnly).toHaveBeenCalledWith(cwd);
+    expect(readFileSync(specPath, "utf-8")).toBe("original spec content");
+    const events = readEvents(runDir);
+    const gateEvent = events.find((e) => e.type === "gate_result");
+    expect(gateEvent).toMatchObject({ checks: "fail", reason: "spec_tampered" });
+    const fixList = readFileSync(join(runDir, "artifacts", "fix_list.md"), "utf-8");
+    expect(fixList).toContain("spec.md");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("multi-reviewer AI review passes reviewers map to runReviewGate", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const multiReviewerConfig: RalphLoopStageConfig = {
+      ...stageConfig,
+      gate: {
+        checks: ["true"],
+        ai_review: { enabled: true, model: "reviewer", reviewers: ["reviewer", "reviewer2"], fail_on: ["blocker"] },
+      },
+    };
+    const runAgentTask = mock(async () => ({ ok: true, transcriptPath: "unused", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "pass" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const result = await runRalphLoopOnce(multiReviewerConfig, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    });
+
+    expect(result.result).toBe("pass");
+    expect(runReviewGate).toHaveBeenCalledTimes(1);
+    const args = runReviewGate.mock.calls[0];
+    expect(args.length).toBe(6);
+    const deps = args[5];
+    expect(deps.reviewers).toEqual(profiles);
+    expect(deps.authorProfile).toBe("main-dev");
+    expect(typeof deps.runChecks).toBe("function");
+    expect(typeof deps.callReviewer).toBe("function");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("a config-tamper iteration still records its cost in the budget tracker (without pausing)", async () => {
   const { cwd, runDir } = makeFixtureDirs();
   try {

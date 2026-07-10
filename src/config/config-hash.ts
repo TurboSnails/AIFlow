@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
 function listFilesRecursive(dir: string): string[] {
@@ -25,4 +25,11 @@ export function hashConfigDir(cwd: string): string {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+/** SHA-256 hash of a single spec file; returns undefined if the file does not exist. */
+export function hashSpecFile(specPath: string): string | undefined {
+  if (!existsSync(specPath)) return undefined;
+  const content = readFileSync(specPath);
+  return createHash("sha256").update(content).digest("hex");
 }

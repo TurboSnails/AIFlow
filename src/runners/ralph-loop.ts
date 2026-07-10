@@ -1,9 +1,13 @@
 import { join } from "node:path";
-import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story, type Prd } from "../prd";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
-import { runReviewGate as realRunReviewGate, type ReviewGateOutcome } from "../gate/review-gate";
-import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
+import { runReviewGate as realRunReviewGate, type ReviewGateOutcome, type ReviewGateDeps } from "../gate/review-gate";
+import { runChecks as realRunChecks } from "../gate/check-runner";
+import { callReviewer as realCallReviewer } from "../llm/client";
+import { hashConfigDir as realHashConfigDir, hashSpecFile as realHashSpecFile } from "../config/config-hash";
+import { readSpecBoard as realReadSpecBoard } from "../specboard/specboard";
+import type { SpecBoard } from "../specboard/types";
 import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
 import { appendEvent } from "../events/events";
 import type { RalphLoopStageConfig, ModelProfile } from "../config/schema";
@@ -17,7 +21,8 @@ export interface RalphLoopDeps {
     reviewerProfile: ModelProfile,
     cwd: string,
     diff: string,
-    acceptance: string[]
+    acceptance: string[],
+    deps?: ReviewGateDeps
   ) => Promise<ReviewGateOutcome>;
   git: {
     revParseHead: typeof revParseHead;
@@ -28,6 +33,8 @@ export interface RalphLoopDeps {
     checkoutConfigOnly: typeof checkoutConfigOnly;
   };
   hashConfigDir: (cwd: string) => string;
+  readSpecBoard?: (runDir: string) => SpecBoard;
+  hashSpecFile?: (specPath: string) => string | undefined;
 }
 
 export interface RalphLoopResult {
@@ -38,10 +45,12 @@ export interface RalphLoopResult {
 
 const defaultDeps: RalphLoopDeps = {
   runAgentTask: realRunAgentTask,
-  runReviewGate: (config, reviewerProfile, cwd, diff, acceptance) =>
-    realRunReviewGate(config, reviewerProfile, cwd, diff, acceptance),
+  runReviewGate: (config, reviewerProfile, cwd, diff, acceptance, deps) =>
+    realRunReviewGate(config, reviewerProfile, cwd, diff, acceptance, deps),
   git: { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly },
   hashConfigDir: realHashConfigDir,
+  readSpecBoard: realReadSpecBoard,
+  hashSpecFile: realHashSpecFile,
 };
 
 export function renderPrompt(story: Story, specExcerpt: string, progressTail: string, fixListContent: string): string {
@@ -98,8 +107,14 @@ export async function runRalphLoopOnce(
   const fixListContent = readTail(fixListPath, 4000);
   const prompt = renderPrompt(story, specExcerpt, progressTail, fixListContent);
 
+  const board = (deps.readSpecBoard ?? realReadSpecBoard)(runDir);
+  const specPath = board.artifacts["spec"] ?? "spec.md";
+  const specFullPath = join(cwd, specPath);
+  const specContentBefore = existsSync(specFullPath) ? readFileSync(specFullPath, "utf-8") : undefined;
+
   await deps.git.revParseHead(cwd);
   const configHashBefore = deps.hashConfigDir(cwd);
+  const specHashBefore = (deps.hashSpecFile ?? realHashSpecFile)(specFullPath);
 
   const agentResult = await deps.runAgentTask({
     profile: mainDevProfile,
@@ -111,29 +126,38 @@ export async function runRalphLoopOnce(
     story: story.id,
   });
 
-  if (agentResult.ok && deps.hashConfigDir(cwd) !== configHashBefore) {
-    await deps.git.checkoutConfigOnly(cwd);
-    const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
-    writePrd(prdPath, updatedPrd);
-    appendFileSync(
-      fixListPath,
-      `\n## ${story.id} (round ${updatedPrd.stories.find((s) => s.id === story.id)!.fixCount})\n检测到 \`.aiflow/config/\` 在本轮被修改，已自动恢复并记为门禁失败。\n`
-    );
-    appendEvent(runDir, {
-      ts: new Date().toISOString(),
-      type: "gate_result",
-      stage: stageConfig.id,
-      story: story.id,
-      checks: "fail",
-      ai_review: "skipped",
-      blockers: 0,
-      reason: "config_tampered",
-    });
-    const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
-    const result = suspended ? "suspended" : "fail";
-    appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
-    budget.record(agentResult.usage.costUsd); // 记账；本轮因篡改结束，不熔断
-    return { storyId: story.id, result, usage: agentResult.usage };
+  if (agentResult.ok) {
+    const configHashAfter = deps.hashConfigDir(cwd);
+    const specHashAfter = (deps.hashSpecFile ?? realHashSpecFile)(specFullPath);
+    if (configHashAfter !== configHashBefore || specHashAfter !== specHashBefore) {
+      await deps.git.checkoutConfigOnly(cwd);
+      if (specContentBefore !== undefined) {
+        writeFileSync(specFullPath, specContentBefore);
+      }
+      const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
+      writePrd(prdPath, updatedPrd);
+      const changedTarget = configHashAfter !== configHashBefore ? "`.aiflow/config/`" : "`spec.md`";
+      appendFileSync(
+        fixListPath,
+        `\n## ${story.id} (round ${updatedPrd.stories.find((s) => s.id === story.id)!.fixCount})\n检测到 ${changedTarget} 在本轮被修改，已自动恢复并记为门禁失败。\n`
+      );
+      const reason = configHashAfter !== configHashBefore ? "config_tampered" : "spec_tampered";
+      appendEvent(runDir, {
+        ts: new Date().toISOString(),
+        type: "gate_result",
+        stage: stageConfig.id,
+        story: story.id,
+        checks: "fail",
+        ai_review: "skipped",
+        blockers: 0,
+        reason,
+      });
+      const suspended = updatedPrd.stories.find((s) => s.id === story.id)!.suspended === true;
+      const result = suspended ? "suspended" : "fail";
+      appendEvent(runDir, { ts: new Date().toISOString(), type: "story_result", story: story.id, result });
+      budget.record(agentResult.usage.costUsd); // 记账；本轮因篡改结束，不熔断
+      return { storyId: story.id, result, usage: agentResult.usage };
+    }
   }
 
   if (agentResult.ok && budget.record(agentResult.usage.costUsd)) {
@@ -152,7 +176,12 @@ export async function runRalphLoopOnce(
   await deps.git.stageAll(cwd);
   const diff = await deps.git.diffCached(cwd);
 
-  const gateOutcome = await deps.runReviewGate(stageConfig.gate, reviewerProfile, cwd, diff, story.acceptance);
+  const gateOutcome = await deps.runReviewGate(stageConfig.gate, reviewerProfile, cwd, diff, story.acceptance, {
+    runChecks: realRunChecks,
+    callReviewer: realCallReviewer,
+    reviewers: profiles,
+    authorProfile: stageConfig.model,
+  });
   const totalUsage = {
     inTok: agentResult.usage.inTok + (gateOutcome.usage?.inTok ?? 0),
     outTok: agentResult.usage.outTok + (gateOutcome.usage?.outTok ?? 0),
