@@ -133,3 +133,22 @@ test("budget_warning event round-trips through appendEvent/readEvents", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("can append and read review_verdict event", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "evt-"));
+  try {
+    appendEvent(runDir, {
+      ts: new Date().toISOString(),
+      type: "review_verdict",
+      stage: "develop",
+      story: "T1",
+      reviewers: { kimi: "fail", ds: "pass" },
+      arbitrated: true,
+      final: "fail",
+    });
+    const events = readEvents(runDir);
+    expect(events[0].type).toBe("review_verdict");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});

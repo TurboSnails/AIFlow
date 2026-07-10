@@ -1,6 +1,19 @@
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { RalphLoopStopReason } from "../engine/state";
+import type {
+  DebateRoundAiflowEvent,
+  DebateEndAiflowEvent,
+  GateAnsweredAiflowEvent,
+  LlmRetryAiflowEvent,
+  MergeConflictUnarbitrableAiflowEvent,
+  ReviewArbitratedAiflowEvent,
+  ReviewVerdictAiflowEvent,
+  StageDoneAiflowEvent,
+  StageStartAiflowEvent,
+  StorySuspendedAiflowEvent,
+  WorktreeAiflowEvent,
+} from "./new-events";
 
 export interface OpencodeToolUseAiflowEvent {
   ts: string;
@@ -123,7 +136,18 @@ export type AiflowEvent =
   | HumanGateWaitingAiflowEvent
   | HumanGateRejectedAiflowEvent
   | StoryAutoCleanedAiflowEvent
-  | BudgetWarningAiflowEvent;
+  | BudgetWarningAiflowEvent
+  | StageStartAiflowEvent
+  | StageDoneAiflowEvent
+  | DebateRoundAiflowEvent
+  | DebateEndAiflowEvent
+  | ReviewVerdictAiflowEvent
+  | ReviewArbitratedAiflowEvent
+  | GateAnsweredAiflowEvent
+  | WorktreeAiflowEvent
+  | MergeConflictUnarbitrableAiflowEvent
+  | StorySuspendedAiflowEvent
+  | LlmRetryAiflowEvent;
 
 function eventsPath(runDir: string): string {
   return join(runDir, "events.jsonl");
