@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
 import { writeFileAtomic } from "../atomic/atomic-write";
 import { createRunId, runPipelineOnce, type EngineDeps, type StageOutcome } from "../engine/engine";
+import { writeStateAtomic } from "../engine/state";
 import { runRalphLoop } from "../runners/ralph-loop";
 import { runBrainstormStage } from "../runners/brainstorm";
 import { runSpecStage } from "../runners/spec";
@@ -117,6 +119,10 @@ export async function runCommand(
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
   mkdirSync(runDir, { recursive: true });
 
+  const currentLink = join(cwd, ".aiflow", "current");
+  try { await unlink(currentLink); } catch { /* ignore */ }
+  await symlink(runDir, currentLink, "dir");
+
   const isolation = pipelineConfig.isolation ?? (pipelineAutonomy === "full" ? "worktree" : "none");
   let worktreeCtx: WorktreeContext | undefined;
   let runCwd = cwd;
@@ -133,6 +139,31 @@ export async function runCommand(
       path: worktreeCtx.worktreePath,
     });
   }
+
+  const persistedState: EngineState = {
+    run_id: effectiveRunId,
+    pipeline: pipelineConfig.name,
+    requirement: requirementText,
+    autonomy: pipelineAutonomy,
+    isolation,
+    stages: pipelineConfig.stages.map((s) => ({ id: s.id, status: "pending" })),
+    cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+    ...(pipelineConfig.budget
+      ? {
+          budget: {
+            limit_usd: pipelineConfig.budget.max_cost_usd,
+            ...(pipelineConfig.budget.warn_at_pct ? { warn_at_pct: pipelineConfig.budget.warn_at_pct } : {}),
+          },
+        }
+      : {}),
+  };
+  if (worktreeCtx) {
+    persistedState.worktree = {
+      path: worktreeCtx.worktreePath,
+      branch: worktreeCtx.branch,
+    };
+  }
+  writeStateAtomic(runDir, persistedState);
 
   if (requirementText) {
     const artifactsDir = join(runDir, "artifacts");
@@ -225,7 +256,7 @@ export async function runCommand(
         runDir,
         engineDeps,
         signal,
-        { requirement: requirementText, on_unresolved: effectiveOnUnresolved }
+        { requirement: requirementText, on_unresolved: effectiveOnUnresolved, worktree: worktreeCtx ? { path: worktreeCtx.worktreePath, branch: worktreeCtx.branch } : undefined }
       );
 
       if (worktreeCtx) {

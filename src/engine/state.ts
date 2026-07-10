@@ -18,6 +18,9 @@ export interface EngineState {
   run_id: string;
   pipeline: string;
   requirement?: string;
+  autonomy?: "interactive" | "gated" | "full";
+  isolation?: "none" | "worktree";
+  worktree?: { path: string; branch: string };
   stages: StageState[];
   cost: { input_tokens: number; output_tokens: number; est_usd: number };
   budget?: { limit_usd: number; warn_at_pct?: number[] };

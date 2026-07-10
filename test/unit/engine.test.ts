@@ -787,6 +787,31 @@ test("open questions on the SpecBoard pause the stage when on_unresolved is ask_
   }
 });
 
+test("engine persists isolation and worktree in state.json and runs shell stage", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "aiflow-engine-shell-cwd-"));
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-shell-"));
+  try {
+    const shellPipeline: PipelineConfig = {
+      name: "shell-pipeline",
+      autonomy: "gated",
+      isolation: "worktree",
+      stages: [{ id: "build", type: "shell", command: "echo hello" }],
+    };
+    const worktree = { path: join(cwd, "worktree"), branch: "run-shell-test" };
+    const state = await runPipelineOnce(shellPipeline, profiles, cwd, runDir, {}, undefined, { worktree });
+    expect(state.isolation).toBe("worktree");
+    expect(state.autonomy).toBe("gated");
+    expect(state.worktree).toMatchObject({ path: worktree.path, branch: worktree.branch });
+    expect(state.stages[0].status).toBe("done");
+    const persisted = readState(runDir);
+    expect(persisted.isolation).toBe("worktree");
+    expect(persisted.worktree).toMatchObject({ path: worktree.path, branch: worktree.branch });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("open questions on the SpecBoard do not pause when on_unresolved is main_dev_decides", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-engine-unresolved-dev-"));
   try {

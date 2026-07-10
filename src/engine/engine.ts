@@ -7,6 +7,7 @@ import { runBrainstormStage } from "../runners/brainstorm";
 import { runSpecStage } from "../runners/spec";
 import { runPlanStage } from "../runners/plan";
 import { runHumanGateStage } from "../runners/human-gate";
+import { runShellStage } from "../runners/shell";
 import { writeRunReport } from "../commands/report";
 import { createBudgetTracker, noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import { shouldPause, type Autonomy, type GatePoint, type PolicyContext } from "../policy/autonomy";
@@ -115,6 +116,11 @@ async function adaptHumanGate(
   return runHumanGateStage(stageConfig as HumanGateStageConfig, stageState, profiles, cwd, runDir, nowFn, signal);
 }
 
+async function adaptShell(...args: Parameters<StageRunnerFn>) {
+  const [stageConfig, stageState, profiles, cwd, runDir, nowFn, signal, budget] = args;
+  return runShellStage(stageConfig as import("../config/schema").ShellStageConfig, stageState, profiles, cwd, runDir, nowFn, signal, budget);
+}
+
 const defaultDeps: EngineDeps = {
   runners: {
     ralph_loop: adaptRalphLoop,
@@ -122,6 +128,7 @@ const defaultDeps: EngineDeps = {
     spec: adaptSpec,
     plan: adaptPlan,
     human_gate: adaptHumanGate,
+    shell: adaptShell,
   },
   nowFn: () => new Date(),
   writeRunReport: (runDir, state, now, startedAt) => {
@@ -224,6 +231,8 @@ export interface RunPipelineOptions {
   requirement?: string;
   /** Default policy for unresolved open questions; stage/pipeline config override this. */
   on_unresolved?: "ask_human" | "main_dev_decides";
+  /** Runtime worktree context created by the run command; stored on the initial state. */
+  worktree?: { path: string; branch: string };
 }
 
 /**
@@ -259,6 +268,9 @@ export async function runPipelineOnce(
       run_id: runDir.split("/").pop() ?? "unknown",
       pipeline: pipeline.name,
       requirement: opts.requirement,
+      autonomy: pipeline.autonomy ?? "gated",
+      isolation: pipeline.isolation ?? (pipeline.autonomy === "full" ? "worktree" : "none"),
+      ...(opts.worktree ? { worktree: opts.worktree } : {}),
       stages: pipeline.stages.map((s) => ({ id: s.id, status: "pending" as StageStatus })),
       cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
       ...(pipeline.budget
