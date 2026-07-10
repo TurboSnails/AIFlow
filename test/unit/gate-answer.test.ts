@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readGateAnswer, writeGateAnswer } from "../../src/gate-answer/answer";
@@ -47,6 +47,16 @@ test("writeGateAnswer leaves no temporary file behind", () => {
     expect(existsSync(join(runDir, "gate-answer.json.tmp"))).toBe(false);
     const raw = readFileSync(join(runDir, "gate-answer.json"), "utf-8");
     expect(JSON.parse(raw).status).toBe("waiting");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("readGateAnswer throws on malformed gate-answer.json", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "ga-malformed-"));
+  try {
+    writeFileSync(join(runDir, "gate-answer.json"), JSON.stringify({ status: "answered" }));
+    expect(() => readGateAnswer(runDir)).toThrow();
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
