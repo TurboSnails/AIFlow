@@ -42,7 +42,7 @@ export function runReject(cwd: string, opts: { runId?: string; stage?: string; r
   const stageId = state.stages[targetIndex].id;
   state.stages[targetIndex] = { id: stageId, status: "aborted", reason: "human_gate_rejected" };
   writeStateAtomic(runDir, state);
-  appendEvent(runDir, { ts: new Date().toISOString(), type: "human_gate_rejected", stage: stageId, reason: opts.reason });
+  appendEvent(runDir, { ts: new Date().toISOString(), type: "gate_answered", stage: stageId, by: "cli", action: "reject" });
 
   return { status: "rejected", state, runId };
 }
