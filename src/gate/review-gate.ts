@@ -1,7 +1,9 @@
 import { runChecks as realRunChecks, type CheckResult } from "./check-runner";
 import { callReviewer as realCallReviewer, type ReviewerCallResult } from "../llm/client";
-import { ReviewOutputSchema, type ReviewOutput } from "./review-schema";
+import { ReviewOutputSchema, type ReviewOutput, type ArbitrationOutput } from "./review-schema";
 import type { ReviewGateConfig, ModelProfile } from "../config/schema";
+import { runReviewMatrix as realRunReviewMatrix, type ReviewMatrixResult, type ReviewMatrixDeps } from "../review/matrix";
+import { runArbitrator as realRunArbitrator } from "../review/arbitrator";
 
 export const MAX_DIFF_CHARS = 8000;
 
@@ -17,9 +19,24 @@ export interface ReviewGateOutcome {
 export interface ReviewGateDeps {
   runChecks: (commands: string[], cwd: string) => Promise<CheckResult>;
   callReviewer: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
+  runReviewMatrix?: (
+    config: ReviewGateConfig["ai_review"],
+    reviewers: Record<string, ModelProfile>,
+    authorProfile: string,
+    cwd: string,
+    diff: string,
+    acceptance: string[],
+    deps: ReviewMatrixDeps
+  ) => Promise<ReviewMatrixResult>;
+  runArbitrator?: (profile: ModelProfile, diff: string, issueSets: ReviewOutput[]) => Promise<ArbitrationOutput>;
 }
 
-const defaultDeps: ReviewGateDeps = { runChecks: realRunChecks, callReviewer: realCallReviewer };
+const defaultDeps: ReviewGateDeps = {
+  runChecks: realRunChecks,
+  callReviewer: realCallReviewer,
+  runReviewMatrix: realRunReviewMatrix,
+  runArbitrator: realRunArbitrator,
+};
 
 export function buildReviewPrompt(diff: string, acceptance: string[]): string {
   const truncatedDiff = diff.slice(-MAX_DIFF_CHARS);
@@ -55,7 +72,8 @@ export async function runReviewGate(
   cwd: string,
   diff: string,
   storyAcceptance: string[],
-  deps: ReviewGateDeps = defaultDeps
+  deps: ReviewGateDeps = defaultDeps,
+  reviewers?: Record<string, ModelProfile>
 ): Promise<ReviewGateOutcome> {
   const checkResult = await deps.runChecks(config.checks, cwd);
   if (!checkResult.pass) {
@@ -67,6 +85,20 @@ export async function runReviewGate(
   }
 
   const prompt = buildReviewPrompt(diff, storyAcceptance);
+  const reviewersList = config.ai_review.reviewers;
+  if (reviewersList && reviewersList.length > 1 && reviewers) {
+    const runMatrix = deps.runReviewMatrix ?? realRunReviewMatrix;
+    const matrix = await runMatrix(config.ai_review, reviewers, reviewerProfile.model, cwd, diff, storyAcceptance, deps);
+    if (matrix.aiReview === "needs_arbitration") {
+      const runArb = deps.runArbitrator ?? realRunArbitrator;
+      const arbitration = await runArb(reviewerProfile, diff, matrix.issueSets);
+      const aiReview = arbitration.verdict;
+      const blockers = countBlockers(arbitration, config.ai_review.fail_on);
+      return { checks: "pass", aiReview, blockers, reviewOutput: arbitration, usage: matrix.usage };
+    }
+    const blockers = matrix.aiReview === "fail" ? countBlockers({ summary: "", issues: matrix.issues }, config.ai_review.fail_on) : 0;
+    return { checks: "pass", aiReview: matrix.aiReview, blockers, usage: matrix.usage };
+  }
   let lastError: unknown;
   const usage = { inTok: 0, outTok: 0, costUsd: 0 };
   for (let attempt = 0; attempt < 2; attempt++) {
