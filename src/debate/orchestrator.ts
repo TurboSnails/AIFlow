@@ -14,10 +14,17 @@ export interface DebateResult {
   openQuestions: OpenQuestion[];
   decisions: Decision[];
   rounds: number;
+  /** High-level outcome of the debate. */
+  result: "pass" | "fail";
+  /** Why the debate stopped. Only meaningful when result is "pass". */
   reason: "converged" | "max_rounds" | "stalled";
+  /** Number of models that produced a usable round-1 proposal. */
   successes: number;
+  /** True if the budget was exceeded before the debate could finish. */
   overBudget: boolean;
+  /** Aggregated token and cost usage across all LLM calls. */
   usage: { inTok: number; outTok: number; costUsd: number };
+  /** Per-round summary of resolved and remaining disputes. */
   roundSummaries: { round: number; resolved: number; remaining: number }[];
 }
 
@@ -133,8 +140,8 @@ function parseModeratorOutput(text: string): { resolved: { id: string; topic: st
   try {
     const parsed = JSON.parse(text);
     return ModeratorOutputSchema.parse(parsed);
-  } catch {
-    return { resolved: [], remaining_disputes: [] };
+  } catch (err) {
+    throw new Error(`Moderator output is not valid JSON/Zod: ${err instanceof Error ? err.message : String(err)}\nRaw text: ${text}`);
   }
 }
 
@@ -190,6 +197,7 @@ export async function runDebate(
       openQuestions: [],
       decisions: [],
       rounds: 1,
+      result: "fail",
       reason: "max_rounds",
       successes: successCount,
       overBudget: false,
@@ -207,6 +215,7 @@ export async function runDebate(
       openQuestions: [],
       decisions: [],
       rounds: 1,
+      result: "pass",
       reason: "max_rounds",
       successes: successCount,
       overBudget: true,
@@ -216,6 +225,7 @@ export async function runDebate(
   }
 
   let priorDisputes: DebateDispute[] = [];
+  let lastRemaining: DebateDispute[] = [];
   const resolvedById = new Map<string, Decision>();
   let reason: DebateResult["reason"] = "max_rounds";
   let rounds = 1;
@@ -240,12 +250,43 @@ export async function runDebate(
       break;
     }
 
-    const output = parseModeratorOutput(moderatorResult.text);
+    let output: ReturnType<typeof parseModeratorOutput>;
+    try {
+      output = parseModeratorOutput(moderatorResult.text);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const failureReport = [
+        "# Debate Report",
+        "",
+        "## Requirement",
+        requirement,
+        "",
+        "## Error",
+        `Moderator output could not be parsed: ${message}`,
+        "",
+        "## Raw moderator output",
+        moderatorResult.text,
+      ].join("\n");
+      return {
+        report: failureReport,
+        openQuestions: lastRemaining.map((d) => ({ ...d })),
+        decisions: Array.from(resolvedById.values()),
+        rounds,
+        result: "fail",
+        reason: "max_rounds",
+        successes: successCount,
+        overBudget: false,
+        usage,
+        roundSummaries,
+      };
+    }
+
     for (const r of output.resolved) {
       resolvedById.set(r.id, { id: r.id, topic: r.topic, resolution: r.resolution, by: config.synthesizer });
     }
 
     const remaining = output.remaining_disputes;
+    lastRemaining = remaining;
     roundSummaries.push({ round: roundNumber, resolved: output.resolved.length, remaining: remaining.length });
 
     if (remaining.length === 0) {
@@ -288,7 +329,7 @@ export async function runDebate(
 
   const finalOpenQuestions: OpenQuestion[] =
     reason === "stalled" || reason === "max_rounds" || overBudget
-      ? priorDisputes.map((d) => ({ ...d }))
+      ? lastRemaining.map((d) => ({ ...d }))
       : [];
 
   const decisions = Array.from(resolvedById.values());
@@ -299,6 +340,7 @@ export async function runDebate(
     openQuestions: finalOpenQuestions,
     decisions,
     rounds,
+    result: "pass",
     reason,
     successes: successCount,
     overBudget,

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileAtomic } from "../atomic/atomic-write";
 import { callLlm, callLlmFanOut, type LlmCallResult } from "../llm/client";
 import { appendEvent } from "../events/events";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
@@ -86,7 +87,7 @@ export async function runBrainstormStage(
       return { result: "paused", reason: "budget_exceeded", usage: debate.usage };
     }
 
-    if (debate.successes < 2) {
+    if (debate.result === "fail") {
       appendEvent(runDir, {
         ts: new Date().toISOString(),
         type: "brainstorm_result",
@@ -97,7 +98,7 @@ export async function runBrainstormStage(
       return { result: "fail", usage: debate.usage };
     }
 
-    writeFileSync(join(artifactsDir, stageConfig.output), debate.report);
+    writeFileAtomic(join(artifactsDir, stageConfig.output), debate.report);
     registerArtifact(runDir, "brainstorm-report", join("artifacts", stageConfig.output));
     if (debate.openQuestions.length > 0) {
       addOpenQuestions(runDir, debate.openQuestions);
