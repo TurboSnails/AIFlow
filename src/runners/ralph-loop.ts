@@ -126,7 +126,10 @@ export async function runRalphLoopOnce(
   }
 
   const mainDevProfile = profiles[stageConfig.model];
-  const reviewerProfile = profiles[stageConfig.gate.ai_review.model];
+  const reviewerModel = stageConfig.gate.ai_review.model ??
+    stageConfig.gate.ai_review.reviewers?.[0] ??
+    stageConfig.model;
+  const reviewerProfile = profiles[reviewerModel];
 
   const progressTail = readTail(progressPath, 4000);
   const fixListContent = readTail(fixListPath, 4000);

@@ -157,7 +157,7 @@ export const ProjectConfigSchema = z.object({
   on_unresolved: z.enum(["ask_human", "main_dev_decides"]).default("ask_human"),
   dashboard: z
     .object({
-      port: z.number().int().positive().default(3000),
+      port: z.number().int().positive().default(8080),
       host: z.string().default("127.0.0.1"),
     })
     .default({}),

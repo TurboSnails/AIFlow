@@ -6,11 +6,16 @@ export interface ReviewMatrixDeps {
   callReviewer: (
     profile: ModelProfile,
     prompt: string,
-    stage?: string
+    stage?: string,
+    fetchFn?: typeof fetch,
+    maxRetrySteps?: number,
+    maxTokenCost?: number
   ) => Promise<{
     data: unknown;
     usage: { inTok: number; outTok: number; costUsd: number };
   }>;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 export interface ReviewMatrixResult {
@@ -66,7 +71,7 @@ export async function runReviewMatrix(
             usage: { inTok: 0, outTok: 0, costUsd: 0 },
           };
         }
-        const { data, usage: callUsage } = await deps.callReviewer(profile, prompt, stage);
+        const { data, usage: callUsage } = await deps.callReviewer(profile, prompt, stage, undefined, deps.maxRetrySteps, deps.maxTokenCost);
         const parsed = ReviewOutputSchema.safeParse(data);
         if (!parsed.success) {
           return {

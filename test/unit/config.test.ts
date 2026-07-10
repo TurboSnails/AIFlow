@@ -399,5 +399,5 @@ test("loads project config defaults", () => {
   writeFileSync(path, "{}\n");
   const cfg = loadProjectConfig(path);
   expect(cfg.max_drift_files).toBe(50);
-  expect(cfg.dashboard?.port).toBe(3000);
+  expect(cfg.dashboard?.port).toBe(8080);
 });

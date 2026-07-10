@@ -999,3 +999,37 @@ test("a config-tamper iteration still records its cost in the budget tracker (wi
     rmSync(runDir, { recursive: true, force: true });
   }
 });
+
+test("runRalphLoopOnce falls back to reviewers[0] when ai_review.model is omitted", async () => {
+  const { cwd, runDir } = makeFixtureDirs();
+  try {
+    const runAgentTask = mock(async () => ({
+      ok: true,
+      transcriptPath: "unused",
+      usage: { inTok: 10, outTok: 5, costUsd: 0.001 },
+    }));
+    const runReviewGate = mock(async () => ({ checks: "pass" as const, aiReview: "skipped" as const, blockers: 0 }));
+    const git = fixedGit();
+
+    const config = loopStageConfig({
+      gate: {
+        checks: ["true"],
+        ai_review: { enabled: true, reviewers: ["reviewer"], fail_on: ["blocker"] },
+      },
+    });
+
+    await runRalphLoopOnce(config, profiles, cwd, runDir, "spec excerpt", {
+      runAgentTask,
+      runReviewGate,
+      git,
+      hashConfigDir: mock(() => "same-hash"),
+    });
+
+    expect(runReviewGate).toHaveBeenCalled();
+    const firstCall = (runReviewGate as any).mock.calls[0];
+    expect(firstCall[1]).toEqual(profiles.reviewer);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});

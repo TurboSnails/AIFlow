@@ -14,6 +14,7 @@ export const ReviewOutputSchema = z.object({
   issues: z.array(ReviewIssueSchema),
 });
 
+export type ReviewIssue = z.infer<typeof ReviewIssueSchema>;
 export type ReviewOutput = z.infer<typeof ReviewOutputSchema>;
 
 export const ArbitrationOutputSchema = z.object({

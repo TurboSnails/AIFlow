@@ -190,5 +190,35 @@ test("matrix disagreement triggers arbitrator and uses its final verdict", async
   expect(outcome.aiReview).toBe("fail");
   expect(outcome.blockers).toBe(1);
   expect(outcome.usage).toEqual({ inTok: 30, outTok: 15, costUsd: 0.003 });
-  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets, "unknown");
+  expect(runArbitrator).toHaveBeenCalledWith(reviewerProfile, "diff", issueSets, "unknown", undefined, undefined);
+});
+
+test("all reviewers skipped in matrix normalizes final to pass and does not throw", async () => {
+  const matrixConfig: ReviewGateConfig = {
+    ...baseConfig,
+    ai_review: { ...baseConfig.ai_review, reviewers: ["a", "b"], strict: false },
+  };
+  const reviewers: Record<string, ModelProfile> = {
+    a: reviewerProfile,
+    b: { ...reviewerProfile, model: "b-model" },
+  };
+  const runReviewMatrix = mock(async () => ({
+    aiReview: "skipped" as const,
+    issues: [] as any[],
+    issueSets: [] as any[],
+    verdicts: { a: "skipped" as const, b: "skipped" as const },
+    usage: { inTok: 0, outTok: 0, costUsd: 0 },
+  }));
+  const runChecks = mock(async () => ({ pass: true, output: "" }));
+  const outcome = await runReviewGate(
+    matrixConfig,
+    reviewerProfile,
+    "/tmp/x",
+    "diff",
+    ["accept"],
+    { runChecks, callReviewer: mock(async () => ({ data: { summary: "", issues: [] }, usage: { inTok: 0, outTok: 0, costUsd: 0 } })), runReviewMatrix, reviewers }
+  );
+  expect(outcome.aiReview).toBe("skipped");
+  expect(outcome.matrix?.final).toBe("pass");
+  expect(outcome.blockers).toBe(0);
 });

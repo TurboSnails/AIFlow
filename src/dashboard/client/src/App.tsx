@@ -15,8 +15,10 @@ function RunDetail() {
     api<{ events: object[] }>(`/api/runs/${id}`).then((data) => setEvents(data.events));
     const ws = new WebSocket(wsUrl());
     ws.onmessage = (msg) => {
-      const event = JSON.parse(msg.data);
-      setEvents((prev) => [...prev, event]);
+      const { run_id, event } = JSON.parse(msg.data);
+      if (run_id === id) {
+        setEvents((prev) => [...prev, event]);
+      }
     };
     return () => ws.close();
   }, [id]);

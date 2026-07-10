@@ -5,6 +5,8 @@ import type { ModelProfile } from "../config/schema";
 export interface ArbitratorDeps {
   callLlm: typeof callLlm;
   stage?: string;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 export async function runArbitrator(
@@ -25,7 +27,14 @@ export async function runArbitrator(
     JSON.stringify(issueSets),
   ].join("\n");
   const stage = deps.stage ?? "unknown";
-  const result = await deps.callLlm({ profile, prompt, jsonMode: true, stage });
+  const result = await deps.callLlm({
+    profile,
+    prompt,
+    jsonMode: true,
+    stage,
+    maxRetrySteps: deps.maxRetrySteps,
+    maxTokenCost: deps.maxTokenCost,
+  });
   const parsed = ArbitrationOutputSchema.parse(JSON.parse(result.text));
   return parsed;
 }

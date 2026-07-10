@@ -90,7 +90,7 @@ test("multiple reviewers run in parallel and return needs_arbitration on split v
   const issue = { severity: "blocker", file: "f.ts", line: 1, title: "t", detail: "d", suggestion: "s" };
   const deps = makeDeps({ m: { issues: [] }, m2: { issues: [issue] } });
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { a: reviewer, b: reviewer2 },
     "other",
     "/tmp",
@@ -109,7 +109,7 @@ test("all reviewers failing returns fail with merged issues", async () => {
   const issueB = { severity: "major", file: "b.ts", line: 2, title: "tb", detail: "db", suggestion: "sb" };
   const deps = makeDeps({ m: { issues: [issueA] }, m2: { issues: [issueB] } });
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { a: reviewer, b: reviewer2 },
     "other",
     "/tmp",
@@ -126,7 +126,7 @@ test("all reviewers failing returns fail with merged issues", async () => {
 test("all reviewers passing returns pass", async () => {
   const deps = makeDeps({ m: { issues: [] }, m2: { issues: [] } });
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { a: reviewer, b: reviewer2 },
     "other",
     "/tmp",
@@ -147,7 +147,7 @@ test("strict mode with no remaining reviewers after author exclusion returns fai
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: true },
+    { enabled: true, reviewers: ["rev"], fail_on: ["blocker"], strict: true },
     { rev: reviewer },
     "rev",
     "/tmp",
@@ -168,7 +168,7 @@ test("disabled AI review returns skipped", async () => {
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: false, reviewers: ["rev"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: false, reviewers: ["rev"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
@@ -189,7 +189,7 @@ test("throws reviewer call counts as fail and continues", async () => {
     },
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { a: reviewer, b: reviewer2 },
     "other",
     "/tmp",
@@ -215,7 +215,7 @@ test("aggregates usage across multiple reviewers", async () => {
     },
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { a: reviewer, b: reviewer2 },
     "other",
     "/tmp",
@@ -258,7 +258,7 @@ test("configured reviewer missing from reviewers map is skipped", async () => {
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["missing"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["missing"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
@@ -281,7 +281,7 @@ test("all configured reviewers missing from reviewers map returns skipped when s
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: false },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: false },
     { rev: reviewer },
     "other",
     "/tmp",
@@ -304,7 +304,7 @@ test("all configured reviewers missing from reviewers map returns fail when stri
     }),
   };
   const result = await runReviewMatrix(
-    { enabled: true, reviewers: ["a", "b"], use_agent: false, fail_on: ["blocker"], strict: true },
+    { enabled: true, reviewers: ["a", "b"], fail_on: ["blocker"], strict: true },
     { rev: reviewer },
     "other",
     "/tmp",

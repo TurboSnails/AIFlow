@@ -27,7 +27,14 @@ export interface ReviewGateOutcome {
 
 export interface ReviewGateDeps {
   runChecks: (commands: string[], cwd: string) => Promise<CheckResult>;
-  callReviewer: (profile: ModelProfile, prompt: string, stage?: string) => Promise<ReviewerCallResult>;
+  callReviewer: (
+    profile: ModelProfile,
+    prompt: string,
+    stage?: string,
+    fetchFn?: typeof fetch,
+    maxRetrySteps?: number,
+    maxTokenCost?: number
+  ) => Promise<ReviewerCallResult>;
   runReviewMatrix?: (
     config: ReviewGateConfig["ai_review"],
     reviewers: Record<string, ModelProfile>,
@@ -38,10 +45,19 @@ export interface ReviewGateDeps {
     deps: ReviewMatrixDeps,
     stage?: string
   ) => Promise<ReviewMatrixResult>;
-  runArbitrator?: (profile: ModelProfile, diff: string, issueSets: ReviewOutput[], stage?: string) => Promise<ArbitrationOutput>;
+  runArbitrator?: (
+    profile: ModelProfile,
+    diff: string,
+    issueSets: ReviewOutput[],
+    stage?: string,
+    maxRetrySteps?: number,
+    maxTokenCost?: number
+  ) => Promise<ArbitrationOutput>;
   reviewers?: Record<string, ModelProfile>;
   authorProfile?: string;
   stage?: string;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 function defaultCallLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
@@ -52,8 +68,13 @@ const defaultDeps: ReviewGateDeps = {
   runChecks: realRunChecks,
   callReviewer: realCallReviewer,
   runReviewMatrix: realRunReviewMatrix,
-  runArbitrator: (profile, diff, issueSets, stage) =>
-    realRunArbitrator(profile, diff, issueSets, { callLlm: defaultCallLlm, stage }),
+  runArbitrator: (profile, diff, issueSets, stage, maxRetrySteps, maxTokenCost) =>
+    realRunArbitrator(profile, diff, issueSets, {
+      callLlm: defaultCallLlm,
+      stage,
+      maxRetrySteps,
+      maxTokenCost,
+    }),
 };
 
 export function buildReviewPrompt(diff: string, acceptance: string[]): string {
@@ -132,8 +153,23 @@ export async function runReviewGate(
       stage
     );
     if (matrix.aiReview === "needs_arbitration") {
-      const runArb = deps.runArbitrator ?? ((profile, d, issues, s) => realRunArbitrator(profile, d, issues, { callLlm: defaultCallLlm, stage: s }));
-      const arbitration = await runArb(reviewerProfile, diff, matrix.issueSets, stage);
+      const runArb =
+        deps.runArbitrator ??
+        ((profile, d, issues, s, maxRetrySteps, maxTokenCost) =>
+          realRunArbitrator(profile, d, issues, {
+            callLlm: defaultCallLlm,
+            stage: s,
+            maxRetrySteps,
+            maxTokenCost,
+          }));
+      const arbitration = await runArb(
+        reviewerProfile,
+        diff,
+        matrix.issueSets,
+        stage,
+        deps.maxRetrySteps,
+        deps.maxTokenCost
+      );
       const aiReview = arbitration.verdict;
       const blockers = countBlockers(arbitration, config.ai_review.fail_on);
       return {
@@ -160,7 +196,7 @@ export async function runReviewGate(
       matrix: {
         verdicts: matrix.verdicts,
         arbitrated: false,
-        final: matrix.aiReview,
+        final: matrix.aiReview === "skipped" ? "pass" : matrix.aiReview,
       },
       issueSets: matrix.issueSets,
     };
@@ -172,7 +208,10 @@ export async function runReviewGate(
       const { data: raw, usage: callUsage } = await deps.callReviewer(
         reviewerProfile,
         attempt === 0 ? prompt : `${prompt}\n\nYour previous response failed to parse as the required JSON shape: ${String(lastError)}`,
-        stage
+        stage,
+        undefined,
+        deps.maxRetrySteps,
+        deps.maxTokenCost
       );
       usage.inTok += callUsage.inTok;
       usage.outTok += callUsage.outTok;

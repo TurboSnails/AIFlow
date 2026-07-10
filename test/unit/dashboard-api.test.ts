@@ -5,6 +5,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { createApp } from "../../src/dashboard/server/api";
 import { createDb, ingestEvents } from "../../src/dashboard/server/db";
+import { readGateAnswer } from "../../src/gate-answer/answer";
 
 function setupRun(runsRoot: string, runId: string) {
   const runDir = join(runsRoot, runId);
@@ -75,7 +76,7 @@ test("GET /api/runs/:id/cost returns zero when no cost events", async () => {
   expect(res.body.total_usd).toBe(0);
 });
 
-test("POST /api/runs/:id/gates/:stage/answer writes gate-answer.json", async () => {
+test("POST /api/runs/:id/gates/:stage/answer writes a valid GateAnswer round-trip", async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), "api-runs-"));
   const db = createDb(":memory:");
   const runDir = setupRun(runsRoot, "r1");
@@ -87,21 +88,56 @@ test("POST /api/runs/:id/gates/:stage/answer writes gate-answer.json", async () 
     .send({ action: "approve", reason: "looks good" });
   expect(res.status).toBe(200);
   expect(res.body.ok).toBe(true);
-  const answer = JSON.parse(readFileSync(join(runDir, "gate-answer.json"), "utf-8"));
-  expect(answer.action).toBe("approve");
-  expect(answer.stage).toBe("plan");
+  const answer = readGateAnswer(runDir);
+  expect(answer).toBeDefined();
+  expect(answer!.action).toBe("approve");
+  expect(answer!.stage).toBe("plan");
+  expect(answer!.status).toBe("answered");
+  expect(answer!.answered_at).toBeTruthy();
+  expect(answer!.reason).toBe("looks good");
 });
 
-test("POST /api/runs/:id/control writes control.json", async () => {
+test("POST /api/runs/:id/gates/:stage/answer preserves prompt from existing gate-answer.json", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "api-runs-"));
+  const db = createDb(":memory:");
+  const runDir = setupRun(runsRoot, "r1");
+  writeFileSync(
+    join(runDir, "gate-answer.json"),
+    JSON.stringify({ stage: "plan", prompt: "Confirm the plan", status: "waiting", answered_at: null, action: null, reason: null })
+  );
+  ingestEvents(db, runDir);
+
+  const app = createApp({ db, runsRoot });
+  const res = await request(app)
+    .post("/api/runs/r1/gates/plan/answer")
+    .send({ action: "reject", reason: "needs rework" });
+  expect(res.status).toBe(200);
+  const answer = readGateAnswer(runDir);
+  expect(answer!.prompt).toBe("Confirm the plan");
+  expect(answer!.action).toBe("reject");
+});
+
+test("path traversal run ids return 400 and do not touch files outside runsRoot", async () => {
   const runsRoot = mkdtempSync(join(tmpdir(), "api-runs-"));
   const db = createDb(":memory:");
   const runDir = setupRun(runsRoot, "r1");
   ingestEvents(db, runDir);
 
   const app = createApp({ db, runsRoot });
-  const res = await request(app).post("/api/runs/r1/control").send({ action: "abort" });
-  expect(res.status).toBe(200);
-  expect(res.body.action).toBe("abort");
-  const control = JSON.parse(readFileSync(join(runDir, "control.json"), "utf-8"));
-  expect(control.action).toBe("abort");
+  const res = await request(app)
+    .post("/api/runs/foo%2Fbar/gates/plan/answer")
+    .send({ action: "approve" });
+  expect(res.status).toBe(400);
+  expect(() => readFileSync(join(runsRoot, "..", "evil", "gate-answer.json"), "utf-8")).toThrow();
+});
+
+test("malicious run id with dots and slashes returns 400", async () => {
+  const runsRoot = mkdtempSync(join(tmpdir(), "api-runs-"));
+  const db = createDb(":memory:");
+  const runDir = setupRun(runsRoot, "r1");
+  ingestEvents(db, runDir);
+
+  const app = createApp({ db, runsRoot });
+  const res = await request(app).get("/api/runs/r1..r2");
+  expect(res.status).toBe(400);
 });
