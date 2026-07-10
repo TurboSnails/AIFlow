@@ -15,6 +15,8 @@ type FanOutResult = { profile: ModelProfile; ok: boolean; result?: LlmCallResult
 export interface BrainstormDeps {
   callLlm: typeof callLlm;
   callLlmFanOut: typeof callLlmFanOut;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 const defaultDeps: BrainstormDeps = { callLlm, callLlmFanOut };
@@ -121,7 +123,7 @@ export async function runBrainstormStage(
       ts: new Date().toISOString(),
       type: "debate_end",
       stage: stageConfig.id,
-      reason: debate.reason,
+      reason: debate.reason ?? "max_rounds",
       open_questions: debate.openQuestions.length,
     });
     appendEvent(runDir, {
@@ -137,7 +139,7 @@ export async function runBrainstormStage(
 
   const modelProfiles = stageConfig.models.map((name) => profiles[name]);
 
-  const round1 = await deps.callLlmFanOut(modelProfiles, () => renderIdeaPrompt(requirement), { stage: stageConfig.id });
+  const round1 = await deps.callLlmFanOut(modelProfiles, () => renderIdeaPrompt(requirement), { stage: stageConfig.id, maxRetrySteps: deps.maxRetrySteps, maxTokenCost: deps.maxTokenCost });
   const successCount1 = round1.filter((r) => r.ok).length;
   if (successCount1 < 2) {
     appendEvent(runDir, {
@@ -164,6 +166,8 @@ export async function runBrainstormStage(
     prompt: renderSynthesisPrompt(requirement, finalRound),
     thinking: true,
     stage: stageConfig.id,
+    maxRetrySteps: deps.maxRetrySteps,
+    maxTokenCost: deps.maxTokenCost,
   });
 
   if (budget.record(synthesis.usage.costUsd)) {

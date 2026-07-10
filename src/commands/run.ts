@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
+import { writeFileAtomic } from "../atomic/atomic-write";
 import { createRunId, runPipelineOnce, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
 import { runBrainstormStage } from "../runners/brainstorm";
@@ -41,16 +42,23 @@ import type {
 
 export interface RunCommandOverrides {
   runAgentTask?: (task: AgentTask) => Promise<AgentResult>;
-  callReviewer?: (profile: ModelProfile, prompt: string) => Promise<ReviewerCallResult>;
+  callReviewer?: (
+    profile: ModelProfile,
+    prompt: string,
+    stage?: string,
+    fetchFn?: typeof fetch,
+    maxRetrySteps?: number,
+    maxTokenCost?: number
+  ) => Promise<ReviewerCallResult>;
   callLlm?: typeof realCallLlm;
   callLlmFanOut?: typeof realCallLlmFanOut;
   createWorktree?: (cwd: string, runId: string) => Promise<WorktreeContext>;
-  removeWorktree?: (ctx: WorktreeContext) => Promise<void>;
+  removeWorktree?: (ctx: WorktreeContext) => Promise<boolean>;
   tryMergeBack?: (
     ctx: WorktreeContext,
     autonomy: string,
     maxDriftFiles?: number
-  ) => Promise<"merged" | "conflict" | "skipped" | "drift">;
+  ) => Promise<"merged" | "conflict" | "skipped" | "drift" | "error">;
   resolveConflict?: (ctx: WorktreeContext) => Promise<"aborted" | "failed">;
   diffConflictFileNames?: (cwd: string) => Promise<string[]>;
   diffFilesSinceMergeBase?: (cwd: string, branch: string) => Promise<string[]>;
@@ -129,10 +137,12 @@ export async function runCommand(
   if (requirementText) {
     const artifactsDir = join(runDir, "artifacts");
     mkdirSync(artifactsDir, { recursive: true });
-    writeFileSync(join(artifactsDir, "requirement.md"), requirementText);
+    writeFileAtomic(join(artifactsDir, "requirement.md"), requirementText);
   }
 
   const runAgentTask = overrides.runAgentTask ?? realRunAgentTask;
+  const runAgentTaskWithBudget = (task: AgentTask) =>
+    runAgentTask({ ...task, maxTokenCost: pipelineConfig.budget?.max_token_cost });
   const reviewerCallFn = overrides.callReviewer ?? realCallReviewer;
   const callLlmFn = overrides.callLlm ?? realCallLlm;
   const callLlmFanOutFn = overrides.callLlmFanOut ?? realCallLlmFanOut;
@@ -162,12 +172,15 @@ export async function runCommand(
           stageRunDir,
           specExcerpt,
           {
-            runAgentTask,
+            runAgentTask: runAgentTaskWithBudget,
             runReviewGate: (config, reviewerProfile, gateCwd, diff, acceptance) =>
               realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
                 runChecks,
-                callReviewer: reviewerCallFn,
+                callReviewer: (profile, prompt, stage, fetchFn) =>
+                  reviewerCallFn(profile, prompt, stage, fetchFn, pipelineConfig.budget?.max_retry_steps, pipelineConfig.budget?.max_token_cost),
                 stage: stageConfig.id,
+                maxRetrySteps: pipelineConfig.budget?.max_retry_steps,
+                maxTokenCost: pipelineConfig.budget?.max_token_cost,
               }),
             git: {
               revParseHead,
@@ -191,9 +204,11 @@ export async function runCommand(
         runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, {
           callLlm: callLlmFn,
           callLlmFanOut: callLlmFanOutFn,
+          maxRetrySteps: pipelineConfig.budget?.max_retry_steps,
+          maxTokenCost: pipelineConfig.budget?.max_token_cost,
         }, budget),
       spec: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
-        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { runAgentTask }, budget),
+        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { runAgentTask: runAgentTaskWithBudget }, budget),
       plan: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
         runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, undefined, budget),
       human_gate: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, _budget) =>
@@ -239,15 +254,15 @@ export async function runCommand(
               branch: worktreeCtx.branch,
               path: worktreeCtx.worktreePath,
             });
+            const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+            const removed = await removeWorktree(worktreeCtx);
             appendEvent(runDir, {
               ts: new Date().toISOString(),
               type: "worktree",
-              action: "remove",
+              action: removed ? "remove" : "remove_failed",
               branch: worktreeCtx.branch,
               path: worktreeCtx.worktreePath,
             });
-            const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
-            await removeWorktree(worktreeCtx);
             worktreeHandled = true;
           } else if (mergeResult === "conflict" || mergeResult === "drift") {
             appendEvent(runDir, {
@@ -272,6 +287,16 @@ export async function runCommand(
             });
             worktreeHandled = true;
             // Leave the worktree and branch in place so the user can resolve manually.
+          } else if (mergeResult === "error") {
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "worktree",
+              action: "error",
+              branch: worktreeCtx.branch,
+              path: worktreeCtx.worktreePath,
+            });
+            worktreeHandled = true;
+            // Leave the worktree and branch in place; do not attempt resolveConflict.
           }
         }
       }
@@ -281,18 +306,14 @@ export async function runCommand(
   } finally {
     if (worktreeCtx && !worktreeHandled) {
       const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+      const removed = await removeWorktree(worktreeCtx);
       appendEvent(runDir, {
         ts: new Date().toISOString(),
         type: "worktree",
-        action: "remove",
+        action: removed ? "remove" : "remove_failed",
         branch: worktreeCtx.branch,
         path: worktreeCtx.worktreePath,
       });
-      try {
-        await removeWorktree(worktreeCtx);
-      } catch {
-        // Best-effort cleanup: do not mask the pipeline outcome or original error.
-      }
     }
   }
 }

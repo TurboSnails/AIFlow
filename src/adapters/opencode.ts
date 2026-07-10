@@ -12,12 +12,14 @@ export interface AgentTask {
   runDir: string;
   stage: string;
   story: string;
+  maxTokenCost?: number;
 }
 
 export interface AgentResult {
   ok: boolean;
   transcriptPath: string;
   usage: { inTok: number; outTok: number; costUsd: number };
+  reason?: string;
 }
 
 export type SpawnFn = (
@@ -44,10 +46,13 @@ function buildArgs(task: AgentTask): string[] {
 }
 
 export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSpawn): Promise<AgentResult> {
-  const artifactsDir = join(task.runDir, "artifacts", "opencode");
-  mkdirSync(artifactsDir, { recursive: true });
+  const legacyArtifactsDir = join(task.runDir, "artifacts", "opencode");
+  const transcriptsDir = join(task.runDir, "transcripts");
+  mkdirSync(legacyArtifactsDir, { recursive: true });
+  mkdirSync(transcriptsDir, { recursive: true });
   const callId = `${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-  const transcriptPath = join(artifactsDir, `${callId}.jsonl`);
+  const legacyPath = join(legacyArtifactsDir, `${callId}.jsonl`);
+  const transcriptPath = join(transcriptsDir, `${callId}.jsonl`);
 
   const controller = new AbortController();
   const proc = spawnFn(buildArgs(task), { cwd: task.cwd, signal: controller.signal });
@@ -64,6 +69,7 @@ export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSp
   let inTok = 0;
   let outTok = 0;
   let costUsd = 0;
+  let abortedByBudget = false;
 
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
@@ -85,6 +91,7 @@ export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSp
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (line.trim().length === 0) continue;
+        appendFileSync(legacyPath, line + "\n");
         appendFileSync(transcriptPath, line + "\n");
         const event = parseOpenCodeLine(line);
         if (!event) continue;
@@ -109,8 +116,23 @@ export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSp
             out_tok: event.part.tokens.output,
             cost_usd: event.part.cost,
           });
+          if (task.maxTokenCost !== undefined && costUsd > task.maxTokenCost) {
+            abortedByBudget = true;
+            appendEvent(task.runDir, {
+              ts: new Date().toISOString(),
+              type: "budget_warning",
+              stage: task.stage,
+              threshold_pct: 100,
+              spent_usd: costUsd,
+              limit_usd: task.maxTokenCost,
+            });
+            controller.abort();
+            proc.kill();
+            break;
+          }
         }
       }
+      if (abortedByBudget) break;
     }
   } finally {
     clearTimeout(timer);
@@ -118,8 +140,9 @@ export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSp
 
   const exitCode = await proc.exited;
   return {
-    ok: exitCode === 0,
+    ok: exitCode === 0 && !abortedByBudget,
     transcriptPath,
     usage: { inTok, outTok, costUsd },
+    reason: abortedByBudget ? "max_token_cost_exceeded" : undefined,
   };
 }

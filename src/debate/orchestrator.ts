@@ -7,6 +7,8 @@ import { ModeratorOutputSchema, type DebateDispute } from "./schemas";
 export interface DebateDeps {
   callLlmFanOut: typeof callLlmFanOut;
   callLlm: typeof callLlm;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 export interface Usage {
@@ -206,7 +208,7 @@ export async function runDebateInternal(
   let overBudget = false;
 
   // Round 1: independent proposals.
-  const round1FanOut = await deps.callLlmFanOut(modelProfiles, () => renderProposalPrompt(requirement), { stage: config.id });
+  const round1FanOut = await deps.callLlmFanOut(modelProfiles, () => renderProposalPrompt(requirement), { stage: config.id, maxRetrySteps: deps.maxRetrySteps, maxTokenCost: deps.maxTokenCost });
   let currentRound = toRoundEntries(config, profiles, round1FanOut);
   for (const entry of currentRound) {
     if (entry.usage) usage = addUsage(usage, { usage: entry.usage });
@@ -263,6 +265,8 @@ export async function runDebateInternal(
       prompt: renderModeratorPrompt(requirement, proposals, priorDisputes),
       jsonMode: true,
       stage: config.id,
+      maxRetrySteps: deps.maxRetrySteps,
+      maxTokenCost: deps.maxTokenCost,
     });
     usage = addUsage(usage, { usage: moderatorResult.usage });
     if (budget) {
@@ -336,7 +340,7 @@ export async function runDebateInternal(
         .filter((e) => e.ok && e.text && e.name !== self.name)
         .map((e) => ({ label: e.label, text: e.text! }));
       return renderResponsePrompt(requirement, self.label, others, priorDisputes);
-    }, { stage: config.id });
+    }, { stage: config.id, maxRetrySteps: deps.maxRetrySteps, maxTokenCost: deps.maxTokenCost });
     currentRound = toRoundEntries(config, profiles, nextFanOut);
     const fanOutCost = currentRound.reduce((sum, e) => sum + (e.usage?.costUsd ?? 0), 0);
     for (const entry of currentRound) {

@@ -205,3 +205,70 @@ test("callLlm emits llm_retry event on retryable failure when a run context is s
 
   rmSync(runDir, { recursive: true, force: true });
 });
+
+test("callLlm throws when single-call cost exceeds max_token_cost", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = { ...profile, input_cost_per_1m: 1, output_cost_per_1m: 0 };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 2_000_000, completion_tokens: 0 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  await expect(callLlm({ profile: pricedProfile, prompt: "x", maxTokenCost: 1, fetchFn: fakeFetch })).rejects.toThrow("max_token_cost");
+});
+
+test("callLlm honors maxRetrySteps for retry limit", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  let calls = 0;
+  const fakeFetch = (async () => {
+    calls += 1;
+    return new Response("rate limited", { status: 429 });
+  }) as unknown as typeof fetch;
+
+  await expect(callLlm({ profile, prompt: "x", maxRetrySteps: 1, fetchFn: fakeFetch })).rejects.toThrow();
+  expect(calls).toBe(2);
+});
+
+test("callReviewer forwards maxRetrySteps and maxTokenCost to callLlm", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = { ...profile, input_cost_per_1m: 1, output_cost_per_1m: 0 };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: JSON.stringify({ summary: "ok", issues: [] }) } }], usage: { prompt_tokens: 2_000_000, completion_tokens: 0 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  await expect(callReviewer(pricedProfile, "review", "unknown", fakeFetch, 0, 1)).rejects.toThrow("max_token_cost");
+});
+
+test("callLlm computes costUsd from ModelProfile.price when configured", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = { ...profile, price: { in_per_m: 2, out_per_m: 3 } };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1_000_000, completion_tokens: 500_000 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callLlm({ profile: pricedProfile, prompt: "x", fetchFn: fakeFetch });
+  expect(result.usage.costUsd).toBeCloseTo(3.5, 5);
+});
+
+test("callLlm prefers price over legacy input_cost_per_1m/output_cost_per_1m", async () => {
+  process.env.TEST_REVIEWER_KEY = "fake-key-value";
+  const pricedProfile: ModelProfile = {
+    ...profile,
+    price: { in_per_m: 1, out_per_m: 1 },
+    input_cost_per_1m: 100,
+    output_cost_per_1m: 100,
+  };
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 } }),
+      { status: 200 }
+    )) as unknown as typeof fetch;
+
+  const result = await callLlm({ profile: pricedProfile, prompt: "x", fetchFn: fakeFetch });
+  expect(result.usage.costUsd).toBeCloseTo(2, 5);
+});

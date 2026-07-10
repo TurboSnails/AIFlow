@@ -91,7 +91,11 @@ describe("tryMergeBack", () => {
 
   test("returns conflict when merge fails", async () => {
     const { deps } = makeDeps({
-      runGit: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
+      runGit: async (cwd, args) => {
+        if (args[0] === "merge-base") return { exitCode: 0, stdout: "base123\n", stderr: "" };
+        if (args[0] === "diff" && args[1] === "--name-only") return { exitCode: 0, stdout: "\n", stderr: "" };
+        return { exitCode: 1, stdout: "", stderr: "" };
+      },
     });
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
@@ -166,26 +170,27 @@ describe("resolveConflict", () => {
 });
 
 describe("removeWorktree", () => {
-  test("removes worktree and branch, ignoring errors", async () => {
+  test("removes worktree and branch and returns true", async () => {
     const { deps, calls } = makeDeps();
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
-    await removeWorktree(ctx, deps);
+    const result = await removeWorktree(ctx, deps);
 
+    expect(result).toBe(true);
     expect(calls).toHaveLength(2);
     expect(calls[0].args).toEqual(["worktree", "remove", ctx.worktreePath]);
     expect(calls[1].args).toEqual(["branch", "-D", ctx.branch]);
   });
 
-  test("does not throw when git commands fail", async () => {
+  test("returns false when git commands fail", async () => {
     const { deps } = makeDeps({
-      runGit: async () => {
-        throw new Error("git crashed");
-      },
+      runGit: async () => ({ exitCode: 1, stdout: "", stderr: "" }),
     });
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
-    await expect(removeWorktree(ctx, deps)).resolves.toBeUndefined();
+    const result = await removeWorktree(ctx, deps);
+
+    expect(result).toBe(false);
   });
 });
 
@@ -249,3 +254,30 @@ describe("parsePorcelainWorktrees", () => {
   });
 });
 
+
+describe("tryMergeBack git error handling", () => {
+  test("returns error when merge-base fails", async () => {
+    const { deps } = makeDeps({
+      runGit: async () => ({ exitCode: 1, stdout: "", stderr: "fatal: Not a valid object name" }),
+    });
+    const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
+
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
+
+    expect(result).toBe("error");
+  });
+
+  test("returns error when diff --name-only fails", async () => {
+    const { deps } = makeDeps();
+    deps.runGit = async (cwd, args) => {
+      if (args[0] === "merge-base") return { exitCode: 0, stdout: "base123\n", stderr: "" };
+      if (args[0] === "diff" && args[1] === "--name-only") return { exitCode: 1, stdout: "", stderr: "diff failed" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
+
+    const result = await tryMergeBack(ctx, "gated", 50, deps);
+
+    expect(result).toBe("error");
+  });
+});

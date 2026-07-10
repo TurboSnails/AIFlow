@@ -1,9 +1,10 @@
 import { join } from "node:path";
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import type { EngineState } from "../engine/state";
 import type { AiflowEvent } from "../events/events";
 import { readEvents } from "../events/events";
 import { listRunIdsByMtimeDesc } from "../runs/store";
+import { writeFileAtomic } from "../atomic/atomic-write";
 
 export interface RunReportOptions {
   now: Date;
@@ -163,7 +164,7 @@ export function renderRunReport(state: EngineState, events: AiflowEvent[], opts:
 
 export function writeRunReport(runDir: string, state: EngineState, events: AiflowEvent[], opts: RunReportOptions): string {
   const content = renderRunReport(state, events, opts);
-  writeFileSync(join(runDir, "run-report.md"), content);
+  writeFileAtomic(join(runDir, "run-report.md"), content);
   return content;
 }
 

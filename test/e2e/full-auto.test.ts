@@ -53,8 +53,8 @@ function mockCreateWorktree(cwd: string, runId: string): Promise<WorktreeContext
   return Promise.resolve({ originalCwd: cwd, worktreePath: cwd, branch: `aiflow/${runId}` });
 }
 
-function mockRemoveWorktree(): Promise<void> {
-  return Promise.resolve();
+function mockRemoveWorktree(): Promise<boolean> {
+  return Promise.resolve(true);
 }
 
 test("full-auto pipeline completes with mocks", async () => {

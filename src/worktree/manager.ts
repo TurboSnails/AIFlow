@@ -113,16 +113,16 @@ export async function tryMergeBack(
   autonomy: string,
   maxDriftFiles: number = 50,
   deps: WorktreeManagerDeps = defaultDeps,
-): Promise<"merged" | "conflict" | "skipped" | "drift"> {
+): Promise<"merged" | "conflict" | "skipped" | "drift" | "error"> {
   if (autonomy === "full") return "skipped";
   const mergeBase = await deps.runGit(ctx.originalCwd, ["merge-base", "HEAD", ctx.branch]);
   if (mergeBase.exitCode !== 0) {
-    return "conflict";
+    return "error";
   }
   const base = mergeBase.stdout.trim();
   const driftDiff = await deps.runGit(ctx.originalCwd, ["diff", "--name-only", `${base}..HEAD`]);
   if (driftDiff.exitCode !== 0) {
-    return "conflict";
+    return "error";
   }
   const driftFiles = driftDiff.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
   if (driftFiles.length > maxDriftFiles) {
@@ -143,17 +143,22 @@ export async function resolveConflict(
 export async function removeWorktree(
   ctx: WorktreeContext,
   deps: WorktreeManagerDeps = defaultDeps,
-): Promise<void> {
+): Promise<boolean> {
+  let worktreeOk = false;
+  let branchOk = false;
   try {
-    await deps.runGit(ctx.originalCwd, ["worktree", "remove", ctx.worktreePath]);
+    const result = await deps.runGit(ctx.originalCwd, ["worktree", "remove", ctx.worktreePath]);
+    worktreeOk = result.exitCode === 0;
   } catch {
     // Best-effort cleanup: do not block the caller on already-removed worktrees.
   }
   try {
-    await deps.runGit(ctx.originalCwd, ["branch", "-D", ctx.branch]);
+    const result = await deps.runGit(ctx.originalCwd, ["branch", "-D", ctx.branch]);
+    branchOk = result.exitCode === 0;
   } catch {
     // Best-effort cleanup: ignore missing branches.
   }
+  return worktreeOk && branchOk;
 }
 
 export async function listStaleWorktrees(

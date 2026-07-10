@@ -58,7 +58,7 @@ export interface GateAnsweredAiflowEvent {
 export interface WorktreeAiflowEvent {
   ts: string;
   type: "worktree";
-  action: "create" | "commit" | "merge_attempt" | "conflict" | "resolved" | "remove";
+  action: "create" | "commit" | "merge_attempt" | "conflict" | "resolved" | "remove" | "remove_failed" | "error";
   branch: string;
   path: string;
 }

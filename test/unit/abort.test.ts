@@ -127,3 +127,31 @@ test("leaves terminal stages unchanged", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("aborts paused stages", () => {
+  const runId = "20260101_120000_paused";
+  const runDir = makeRunDir(runId);
+  const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
+  try {
+    writeFileSync(
+      join(runDir, "state.json"),
+      JSON.stringify({
+        run_id: runId,
+        pipeline: "dev",
+        stages: [
+          { id: "s1", status: "done" },
+          { id: "s2", status: "paused" },
+        ],
+        cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      })
+    );
+
+    const result = runAbort(dir, { runId });
+
+    expect(result.status).toBe("aborted");
+    const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
+    expect(updated.stages.map((s: { status: string }) => s.status)).toEqual(["done", "aborted"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

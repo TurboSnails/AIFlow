@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgentTask, type AgentTask } from "../../src/adapters/opencode";
@@ -29,7 +29,7 @@ function baseTask(runDir: string): AgentTask {
   };
 }
 
-test("runAgentTask parses a real event stream, writes events.jsonl, and reports usage", async () => {
+test("runAgentTask parses a real event stream, writes transcripts to both legacy and new paths, and reports usage", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-adapter-test-"));
   try {
     const lines = [
@@ -49,6 +49,9 @@ test("runAgentTask parses a real event stream, writes events.jsonl, and reports 
     expect(result.usage.inTok).toBe(110);
     expect(result.usage.outTok).toBe(20);
     expect(result.usage.costUsd).toBe(0.002);
+    expect(existsSync(result.transcriptPath)).toBe(true);
+    expect(result.transcriptPath.startsWith(join(runDir, "transcripts"))).toBe(true);
+    expect(existsSync(join(runDir, "artifacts", "opencode"))).toBe(true);
 
     const events = readEvents(runDir);
     const toolUseEvents = events.filter((e) => e.type === "opencode_tool_use");
@@ -71,6 +74,43 @@ test("runAgentTask returns ok:false when the subprocess exits non-zero", async (
     });
     const result = await runAgentTask(baseTask(runDir), fakeSpawn);
     expect(result.ok).toBe(false);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("runAgentTask aborts and reports ok:false when cumulative cost exceeds maxTokenCost", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "aiflow-adapter-budget-"));
+  try {
+    let killed = false;
+    let resolveExited: (code: number) => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+      resolveExited = resolve;
+    });
+    const lines = [
+      '{"type":"step_finish","timestamp":1,"sessionID":"s1","part":{"type":"step-finish","reason":"stop","tokens":{"total":100,"input":90,"output":10,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.05}}',
+      '{"type":"step_finish","timestamp":2,"sessionID":"s1","part":{"type":"step-finish","reason":"stop","tokens":{"total":100,"input":90,"output":10,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.06}}',
+    ];
+    const fakeSpawn = () => ({
+      stdout: fakeStdoutStream(lines),
+      exited,
+      kill: () => {
+        killed = true;
+        resolveExited(1);
+      },
+    });
+
+    const task = { ...baseTask(runDir), maxTokenCost: 0.1 };
+    const result = await runAgentTask(task, fakeSpawn);
+
+    expect(killed).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("max_token_cost_exceeded");
+    expect(result.usage.costUsd).toBeGreaterThan(0.1);
+
+    const events = readEvents(runDir);
+    const warning = events.find((e) => e.type === "budget_warning");
+    expect(warning).toBeDefined();
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }

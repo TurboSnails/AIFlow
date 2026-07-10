@@ -17,7 +17,7 @@ export function runAbort(cwd: string, opts: { runId?: string }): AbortResult {
   if (!existsSync(statePath)) return { status: "no_runs", runId };
   const state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   state.stages = state.stages.map((s) =>
-    (s.status === "running" || s.status === "waiting_human" || s.status === "pending" ? { ...s, status: "aborted" } : s)
+    (s.status === "running" || s.status === "waiting_human" || s.status === "pending" || s.status === "paused" ? { ...s, status: "aborted" } : s)
   );
   writeStateAtomic(runDir, state);
   appendEvent(runDir, { ts: new Date().toISOString(), type: "run_aborted" });

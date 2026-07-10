@@ -91,7 +91,7 @@ test("full pipeline pauses at human_gate, then approve resumes and runs the rema
     const state = await runCommand(
       dir,
       "full-auto",
-      { runAgentTask: fakeRunAgentTaskWritingSpec, callLlm: fakeCallLlm, callLlmFanOut: fakeCallLlmFanOut, createWorktree: fakeCreateWorktree, removeWorktree: async () => {} },
+      { runAgentTask: fakeRunAgentTaskWritingSpec, callLlm: fakeCallLlm, callLlmFanOut: fakeCallLlmFanOut, createWorktree: fakeCreateWorktree, removeWorktree: async () => true },
       { requirement: "Add offline cache" }
     );
     expect(state.stages.map((s) => s.status)).toEqual(["done", "done", "waiting_human", "pending", "pending"]);
@@ -277,8 +277,9 @@ test("run creates worktree when isolation=worktree", async () => {
       createCalls.push({ cwd, runId });
       return { originalCwd: cwd, worktreePath, branch: `aiflow/${runId}` };
     };
-    const fakeRemove = async (ctx: { worktreePath: string }) => {
+    const fakeRemove = async (ctx: WorktreeContext) => {
       removeCalls.push({ worktreePath: ctx.worktreePath });
+      return true;
     };
 
     const runId = "20260101_120000_test";

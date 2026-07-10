@@ -10,6 +10,8 @@ export interface LlmCallOptions {
   thinking?: boolean;
   fetchFn?: typeof fetch;
   stage?: string;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 export interface LlmCallResult {
@@ -34,7 +36,8 @@ function isRetryableError(err: unknown): boolean {
   return true;
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries: number, stage: string): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetrySteps: number | undefined, stage: string): Promise<T> {
+  const retries = maxRetrySteps ?? 3;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -60,7 +63,16 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, stage: string
 }
 
 export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
-  const { profile, prompt, jsonMode = false, thinking = false, fetchFn = fetch, stage = "unknown" } = opts;
+  const {
+    profile,
+    prompt,
+    jsonMode = false,
+    thinking = false,
+    fetchFn = fetch,
+    stage = "unknown",
+    maxRetrySteps,
+    maxTokenCost,
+  } = opts;
   if (!profile.api_key_env) throw new Error("Profile has no api_key_env configured");
   const apiKey = process.env[profile.api_key_env];
   if (!apiKey) throw new Error(`Environment variable ${profile.api_key_env} is not set`);
@@ -92,23 +104,35 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
     };
     const inTok = data.usage?.prompt_tokens ?? 0;
     const outTok = data.usage?.completion_tokens ?? 0;
-    const costUsd =
-      (inTok / 1_000_000) * (profile.input_cost_per_1m ?? 0) +
-      (outTok / 1_000_000) * (profile.output_cost_per_1m ?? 0);
+    const inPerM = profile.price?.in_per_m ?? profile.input_cost_per_1m ?? 0;
+    const outPerM = profile.price?.out_per_m ?? profile.output_cost_per_1m ?? 0;
+    const costUsd = (inTok / 1_000_000) * inPerM + (outTok / 1_000_000) * outPerM;
+    if (maxTokenCost !== undefined && costUsd > maxTokenCost) {
+      throw new Error(`LLM call exceeded max_token_cost: ${costUsd.toFixed(6)} > ${maxTokenCost}`);
+    }
     return {
       text: data.choices[0].message.content,
       usage: { inTok, outTok, costUsd },
     };
-  }, 3, stage);
+  }, maxRetrySteps, stage);
 }
 
 export async function callLlmFanOut(
   profiles: ModelProfile[],
   promptFn: (profile: ModelProfile) => string,
-  opts: { jsonMode?: boolean; thinking?: boolean; fetchFn?: typeof fetch; stage?: string } = {}
+  opts: {
+    jsonMode?: boolean;
+    thinking?: boolean;
+    fetchFn?: typeof fetch;
+    stage?: string;
+    maxRetrySteps?: number;
+    maxTokenCost?: number;
+  } = {}
 ): Promise<Array<{ profile: ModelProfile; ok: boolean; result?: LlmCallResult; error?: string }>> {
   const settled = await Promise.allSettled(
-    profiles.map((profile) => callLlm({ profile, prompt: promptFn(profile), ...opts }))
+    profiles.map((profile) =>
+      callLlm({ profile, prompt: promptFn(profile), ...opts })
+    )
   );
   return settled.map((r, i) =>
     r.status === "fulfilled"
@@ -126,8 +150,19 @@ export async function callReviewer(
   profile: ModelProfile,
   prompt: string,
   stage = "unknown",
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  maxRetrySteps?: number,
+  maxTokenCost?: number
 ): Promise<ReviewerCallResult> {
-  const result = await callLlm({ profile, prompt, jsonMode: true, thinking: false, fetchFn, stage });
+  const result = await callLlm({
+    profile,
+    prompt,
+    jsonMode: true,
+    thinking: false,
+    fetchFn,
+    stage,
+    maxRetrySteps,
+    maxTokenCost,
+  });
   return { data: JSON.parse(result.text), usage: result.usage };
 }
