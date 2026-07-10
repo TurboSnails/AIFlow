@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 
 export function createDb(path: string): Database {
@@ -13,25 +13,102 @@ export function createDb(path: string): Database {
       payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, ts);
+
+    CREATE TABLE IF NOT EXISTS cursors (
+      run_id TEXT PRIMARY KEY,
+      offset INTEGER NOT NULL
+    );
   `);
   return db;
 }
 
+function getCursor(db: Database, runId: string): number {
+  const row = db.prepare("SELECT offset FROM cursors WHERE run_id = ?").get(runId) as { offset: number } | undefined;
+  return row?.offset ?? 0;
+}
+
+function setCursor(db: Database, runId: string, offset: number): void {
+  db.prepare("INSERT OR REPLACE INTO cursors (run_id, offset) VALUES (?, ?)").run(runId, offset);
+}
+
 export function ingestEvents(db: Database, runDir: string): void {
-  const runId = runDir.split("/").pop() ?? "unknown";
+  const runId = basename(runDir);
   const eventsPath = join(runDir, "events.jsonl");
-  const text = readFileSync(eventsPath, "utf-8");
-  const insert = db.prepare(
-    "INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)"
-  );
+  let text: string;
+  try {
+    text = readFileSync(eventsPath, "utf-8");
+  } catch {
+    return;
+  }
   const lines = text.split("\n").filter((line) => line.trim() !== "");
+  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>) => {
+    const stmt = db.prepare("INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)");
+    for (const row of rows) {
+      stmt.run(runId, row.ts, row.type, row.payload);
+    }
+  });
+  const rows: Array<{ ts: string; type: string; payload: string }> = [];
   for (const line of lines) {
-    const event = JSON.parse(line) as Record<string, unknown>;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
     const ts = String(event.ts ?? "");
     const type = String(event.type ?? "");
-    const payload = JSON.stringify(event);
-    insert.run(runId, ts, type, payload);
+    rows.push({ ts, type, payload: line });
   }
+  if (rows.length > 0) {
+    insert(rows);
+  }
+}
+
+export function tailRun(db: Database, runDir: string, cursor?: number): { cursor: number; ingested: number } {
+  const runId = basename(runDir);
+  const eventsPath = join(runDir, "events.jsonl");
+  let size: number;
+  try {
+    size = statSync(eventsPath).size;
+  } catch {
+    return { cursor: cursor ?? 0, ingested: 0 };
+  }
+  const start = cursor ?? getCursor(db, runId);
+  if (start >= size) {
+    return { cursor: size, ingested: 0 };
+  }
+  let chunk: Buffer;
+  try {
+    chunk = readFileSync(eventsPath).subarray(start, size);
+  } catch {
+    return { cursor: start, ingested: 0 };
+  }
+  const text = chunk.toString("utf-8");
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  const insert = db.transaction((rows: Array<{ ts: string; type: string; payload: string }>) => {
+    const stmt = db.prepare("INSERT INTO events (run_id, ts, type, payload) VALUES (?, ?, ?, ?)");
+    for (const row of rows) {
+      stmt.run(runId, row.ts, row.type, row.payload);
+    }
+  });
+  const rows: Array<{ ts: string; type: string; payload: string }> = [];
+  for (const line of lines) {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const ts = String(event.ts ?? "");
+    const type = String(event.type ?? "");
+    rows.push({ ts, type, payload: line });
+  }
+  if (rows.length > 0) {
+    insert(rows);
+  }
+  const nextCursor = start + Buffer.byteLength(text, "utf-8");
+  setCursor(db, runId, nextCursor);
+  return { cursor: nextCursor, ingested: rows.length };
 }
 
 export function getEventsForRun(
