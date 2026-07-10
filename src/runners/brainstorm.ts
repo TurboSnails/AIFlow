@@ -137,7 +137,7 @@ export async function runBrainstormStage(
 
   const modelProfiles = stageConfig.models.map((name) => profiles[name]);
 
-  const round1 = await deps.callLlmFanOut(modelProfiles, () => renderIdeaPrompt(requirement));
+  const round1 = await deps.callLlmFanOut(modelProfiles, () => renderIdeaPrompt(requirement), { stage: stageConfig.id });
   const successCount1 = round1.filter((r) => r.ok).length;
   if (successCount1 < 2) {
     appendEvent(runDir, {
@@ -163,6 +163,7 @@ export async function runBrainstormStage(
     profile: synthesizerProfile,
     prompt: renderSynthesisPrompt(requirement, finalRound),
     thinking: true,
+    stage: stageConfig.id,
   });
 
   if (budget.record(synthesis.usage.costUsd)) {

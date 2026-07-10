@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadModelsConfig, loadPipelineConfig } from "../config/loader";
+import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
 import { createRunId, runPipelineOnce, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
@@ -16,15 +16,19 @@ import {
   callReviewer as realCallReviewer,
   callLlm as realCallLlm,
   callLlmFanOut as realCallLlmFanOut,
+  llmRetryContext,
   type ReviewerCallResult,
 } from "../llm/client";
-import { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly } from "../git";
+import { revParseHead, stageAll, diffCached, diffCachedFileNames, commit, checkoutClean, checkoutConfigOnly } from "../git";
 import { assertCleanIfAutoClean } from "./dirty-guard";
 import {
   createWorktree as realCreateWorktree,
   removeWorktree as realRemoveWorktree,
+  tryMergeBack,
+  resolveConflict,
   type WorktreeContext,
 } from "../worktree/manager";
+import { appendEvent } from "../events/events";
 import type { EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -32,6 +36,7 @@ import type {
   BrainstormStageConfig,
   SpecStageConfig,
   PlanStageConfig,
+  ProjectConfig,
 } from "../config/schema";
 
 export interface RunCommandOverrides {
@@ -48,6 +53,22 @@ export interface RequirementInput {
   requirementFile?: string;
 }
 
+function projectConfigPath(cwd: string): string {
+  return join(cwd, ".aiflow", "config", "project.yaml");
+}
+
+function loadProjectConfigWithDefaults(cwd: string): ProjectConfig {
+  const path = projectConfigPath(cwd);
+  if (existsSync(path)) {
+    return loadProjectConfig(path);
+  }
+  return {
+    max_drift_files: 50,
+    on_unresolved: "ask_human",
+    dashboard: { port: 3000, host: "127.0.0.1" },
+  };
+}
+
 export async function runCommand(
   cwd: string,
   pipelineName: string,
@@ -58,6 +79,11 @@ export async function runCommand(
 ): Promise<EngineState> {
   const modelsConfig = loadModelsConfig(join(cwd, ".aiflow", "config", "models.yaml"));
   const pipelineConfig = loadPipelineConfig(join(cwd, ".aiflow", "config", "pipelines", `${pipelineName}.yaml`));
+  const projectConfig = loadProjectConfigWithDefaults(cwd);
+
+  const pipelineAutonomy = pipelineConfig.autonomy ?? "gated";
+  const effectiveOnUnresolved: "ask_human" | "main_dev_decides" =
+    pipelineConfig.on_unresolved ?? projectConfig.on_unresolved ?? "ask_human";
 
   const needsRequirement = pipelineConfig.stages.some((s) => s.type === "brainstorm" || s.type === "spec");
   const requirementText = requirementInput.requirementFile
@@ -75,13 +101,21 @@ export async function runCommand(
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
   mkdirSync(runDir, { recursive: true });
 
-  const isolation = pipelineConfig.isolation ?? "none";
+  const isolation = pipelineConfig.isolation ?? (pipelineAutonomy === "full" ? "worktree" : "none");
   let worktreeCtx: WorktreeContext | undefined;
   let runCwd = cwd;
+  let worktreeHandled = false;
   if (isolation === "worktree") {
     const createWorktree = overrides.createWorktree ?? realCreateWorktree;
     worktreeCtx = await createWorktree(cwd, effectiveRunId);
     runCwd = worktreeCtx.worktreePath;
+    appendEvent(runDir, {
+      ts: new Date().toISOString(),
+      type: "worktree",
+      action: "create",
+      branch: worktreeCtx.branch,
+      path: worktreeCtx.worktreePath,
+    });
   }
 
   if (requirementText) {
@@ -95,15 +129,28 @@ export async function runCommand(
   const callLlmFn = overrides.callLlm ?? realCallLlm;
   const callLlmFanOutFn = overrides.callLlmFanOut ?? realCallLlmFanOut;
 
+  const wrappedCommit = async (commitCwd: string, message: string): Promise<void> => {
+    await commit(commitCwd, message);
+    if (worktreeCtx) {
+      appendEvent(runDir, {
+        ts: new Date().toISOString(),
+        type: "worktree",
+        action: "commit",
+        branch: worktreeCtx.branch,
+        path: worktreeCtx.worktreePath,
+      });
+    }
+  };
+
   const engineDeps: EngineDeps = {
     runners: {
-      ralph_loop: async (stageConfig, _stageState, profiles, runCwd, stageRunDir, _nowFn, signal, budget): Promise<StageOutcome> => {
-        const specPath = join(runCwd, "spec.md");
+      ralph_loop: async (stageConfig, _stageState, profiles, stageCwd, stageRunDir, _nowFn, stageSignal, budget): Promise<StageOutcome> => {
+        const specPath = join(stageCwd, "spec.md");
         const specExcerpt = existsSync(specPath) ? readFileSync(specPath, "utf-8").slice(0, 4000) : "";
         const summary = await runRalphLoop(
           stageConfig as RalphLoopStageConfig,
           profiles,
-          runCwd,
+          stageCwd,
           stageRunDir,
           specExcerpt,
           {
@@ -112,33 +159,95 @@ export async function runCommand(
               realRunReviewGate(config, reviewerProfile, gateCwd, diff, acceptance, {
                 runChecks,
                 callReviewer: reviewerCallFn,
+                stage: stageConfig.id,
               }),
-            git: { revParseHead, stageAll, diffCached, commit, checkoutClean, checkoutConfigOnly },
+            git: {
+              revParseHead,
+              stageAll,
+              diffCached,
+              diffCachedFileNames,
+              commit: wrappedCommit,
+              checkoutClean,
+              checkoutConfigOnly,
+            },
             hashConfigDir: realHashConfigDir,
+            maxDriftFiles: projectConfig.max_drift_files,
+            defaultChecks: projectConfig.default_checks,
           },
-          signal,
+          stageSignal,
           budget
         );
         return { result: summary.result, reason: summary.reason, usage: summary.usage };
       },
-      brainstorm: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
-        runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, {
+      brainstorm: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
+        runBrainstormStage(stageConfig as BrainstormStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, {
           callLlm: callLlmFn,
           callLlmFanOut: callLlmFanOutFn,
         }, budget),
-      spec: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
-        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, { runAgentTask }, budget),
-      plan: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, budget) =>
-        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, undefined, budget),
-      human_gate: (stageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal, _budget) =>
-        runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, runCwd, stageRunDir, nowFn, signal),
+      spec: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
+        runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { runAgentTask }, budget),
+      plan: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
+        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, undefined, budget),
+      human_gate: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, _budget) =>
+        runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal),
     },
   };
 
   try {
-    return await runPipelineOnce(pipelineConfig, modelsConfig.profiles, runCwd, runDir, engineDeps, signal, { requirement: requirementText });
+    return await llmRetryContext.run({ runDir }, async () => {
+      const result = await runPipelineOnce(
+        pipelineConfig,
+        modelsConfig.profiles,
+        runCwd,
+        runDir,
+        engineDeps,
+        signal,
+        { requirement: requirementText, on_unresolved: effectiveOnUnresolved }
+      );
+
+      if (worktreeCtx) {
+        if (pipelineAutonomy === "full") {
+          // Full autonomy: keep the branch for later manual merge; do not remove the worktree.
+          worktreeHandled = true;
+        } else {
+          // Gated/interactive: attempt to merge the shadow branch back into the main branch.
+          appendEvent(runDir, {
+            ts: new Date().toISOString(),
+            type: "worktree",
+            action: "merge_attempt",
+            branch: worktreeCtx.branch,
+            path: worktreeCtx.worktreePath,
+          });
+          const mergeResult = await tryMergeBack(worktreeCtx, pipelineAutonomy);
+          if (mergeResult === "merged") {
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "worktree",
+              action: "resolved",
+              branch: worktreeCtx.branch,
+              path: worktreeCtx.worktreePath,
+            });
+            const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+            await removeWorktree(worktreeCtx);
+            worktreeHandled = true;
+          } else if (mergeResult === "conflict") {
+            await resolveConflict(worktreeCtx);
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "merge_conflict_unarbitrable",
+              stage: pipelineConfig.stages[pipelineConfig.stages.length - 1]?.id ?? "run",
+              files: [],
+            });
+            worktreeHandled = true;
+            // Leave the worktree and branch in place so the user can resolve manually.
+          }
+        }
+      }
+
+      return result;
+    });
   } finally {
-    if (worktreeCtx) {
+    if (worktreeCtx && !worktreeHandled) {
       const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
       try {
         await removeWorktree(worktreeCtx);

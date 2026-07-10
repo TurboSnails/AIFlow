@@ -197,6 +197,7 @@ async function executeStage(
   deps: EngineDeps,
   signal: AbortSignal | undefined,
   budget: BudgetTracker,
+  on_unresolved: "ask_human" | "main_dev_decides" = "ask_human",
 ): Promise<StageExecutionResult> {
   if (signal?.aborted) return { state: { id: stage.id, status: "paused" }, result: "paused" };
 
@@ -221,6 +222,8 @@ export interface RunPipelineOptions {
   now?: Date;
   /** Requirement text for pipelines with a brainstorm/spec stage; stored on the initial state only. */
   requirement?: string;
+  /** Default policy for unresolved open questions; stage/pipeline config override this. */
+  on_unresolved?: "ask_human" | "main_dev_decides";
 }
 
 /**
@@ -311,7 +314,7 @@ export async function runPipelineOnce(
     appendEvent(runDir, { ts: nowFn().toISOString(), type: "stage_start", stage: stage.id });
 
     const budgetTracker = createBudgetTracker(state.budget?.limit_usd, state.cost.est_usd, state.budget?.warn_at_pct);
-    const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal, budgetTracker);
+    const execResult = await executeStage(stage, stageState, profiles, cwd, runDir, nowFn, effectiveDeps, signal, budgetTracker, opts.on_unresolved);
     state = {
       ...state,
       stages: state.stages.map((s, idx) => (idx === i ? execResult.state : s)),
@@ -374,10 +377,16 @@ export async function runPipelineOnce(
     // mark the stage as waiting_human and stop the pipeline here.
     if (execResult.state.status === "done") {
       const effectiveAutonomy: Autonomy = stage.autonomy ?? pipeline.autonomy ?? "gated";
+      const effectiveOnUnresolved: "ask_human" | "main_dev_decides" =
+        (stage.type === "ralph_loop" ? (stage as RalphLoopStageConfig).on_unresolved : undefined) ??
+        pipeline.on_unresolved ??
+        opts.on_unresolved ??
+        "ask_human";
       const gatePoint: GatePoint = GATE_POINTS[stage.type] ?? "run_end";
       const board = readSpecBoard(runDir);
       const policyCtx: PolicyContext = {
         open_questions_count: board.open_questions.length,
+        on_unresolved: effectiveOnUnresolved,
       };
       if (shouldPause(effectiveAutonomy, gatePoint, policyCtx) === "pause") {
         state = {
