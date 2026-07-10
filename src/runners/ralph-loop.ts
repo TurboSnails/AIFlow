@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { mkdirSync, appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { writeFileAtomic } from "../atomic/atomic-write";
 import { readPrd, writePrd, selectNextStory, markStoryPassed, recordStoryFailure, type Story, type Prd } from "../prd";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { runReviewGate as realRunReviewGate, type ReviewGateOutcome, type ReviewGateDeps } from "../gate/review-gate";
@@ -132,7 +133,7 @@ export async function runRalphLoopOnce(
     if (configHashAfter !== configHashBefore || specHashAfter !== specHashBefore) {
       await deps.git.checkoutConfigOnly(cwd);
       if (specContentBefore !== undefined) {
-        writeFileSync(specFullPath, specContentBefore);
+        writeFileAtomic(specFullPath, specContentBefore);
       }
       const updatedPrd = recordStoryFailure(prd, story.id, stageConfig.per_story_fix_limit);
       writePrd(prdPath, updatedPrd);
