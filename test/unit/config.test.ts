@@ -361,3 +361,35 @@ stages:
     expect(config.budget).toBeUndefined();
   });
 });
+
+test("loads pipeline with autonomy, isolation, and multi-reviewer gate", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+  const path = join(dir, "pipeline.yaml");
+  writeFileSync(path, `
+name: full-auto
+autonomy: full
+isolation: worktree
+budget:
+  max_cost_usd: 20
+  max_retry_steps: 5
+  max_token_cost: 2
+stages:
+  - id: develop
+    type: ralph_loop
+    model: main-dev
+    gate:
+      checks: [echo ok]
+      ai_review:
+        enabled: true
+        reviewers: [kimi, ds]
+        use_agent: false
+        fail_on: [blocker]
+        fail_threshold:
+          major: 3
+        strict: false
+`);
+  const cfg = loadPipelineConfig(path);
+  expect(cfg.autonomy).toBe("full");
+  expect(cfg.budget?.max_retry_steps).toBe(5);
+  expect(cfg.stages[0].gate.ai_review.reviewers).toEqual(["kimi", "ds"]);
+});

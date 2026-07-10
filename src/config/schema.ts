@@ -1,18 +1,41 @@
 import { z } from "zod";
 
-export const ModelProfileSchema = z.object({
-  channel: z.enum(["opencode", "http"]),
-  provider: z.string(),
-  model: z.string(),
-  agent: z.string().nullable().optional(),
-  variant: z.string().nullable().optional(),
-  thinking: z.boolean().optional(),
-  dangerously_skip_permissions: z.boolean().optional(),
-  base_url: z.string().optional(),
-  api_key_env: z.string().optional(),
-  input_cost_per_1m: z.number().nonnegative().optional(),
-  output_cost_per_1m: z.number().nonnegative().optional(),
+export const PriceSchema = z.object({
+  in_per_m: z.number().nonnegative(),
+  out_per_m: z.number().nonnegative(),
 });
+
+export const ModelProfileSchema = z
+  .object({
+    channel: z.enum(["opencode", "http"]),
+    provider: z.string(),
+    model: z.string(),
+    agent: z.string().nullable().optional(),
+    variant: z.string().nullable().optional(),
+    thinking: z.boolean().optional(),
+    dangerously_skip_permissions: z.boolean().optional(),
+    base_url: z.string().optional(),
+    api_key_env: z.string().optional(),
+    price: PriceSchema.optional(),
+    // Compatibility fields; read-time converted to `price` when present.
+    input_cost_per_1m: z.number().nonnegative().optional(),
+    output_cost_per_1m: z.number().nonnegative().optional(),
+  })
+  .transform((data) => {
+    if (
+      !data.price &&
+      (data.input_cost_per_1m !== undefined || data.output_cost_per_1m !== undefined)
+    ) {
+      return {
+        ...data,
+        price: {
+          in_per_m: data.input_cost_per_1m ?? 0,
+          out_per_m: data.output_cost_per_1m ?? 0,
+        },
+      };
+    }
+    return data;
+  });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
 export const ModelsConfigSchema = z.object({
@@ -24,10 +47,13 @@ export const ReviewGateConfigSchema = z.object({
   checks: z.array(z.string()),
   ai_review: z.object({
     enabled: z.boolean(),
-    model: z.string(),
+    // M1 compatibility: single-reviewer model reference.
+    model: z.string().optional(),
+    reviewers: z.array(z.string()).min(1).max(2).optional(),
+    use_agent: z.boolean().default(false),
     fail_on: z.array(z.enum(["blocker", "major", "minor", "nit"])),
     fail_threshold: z.record(z.string(), z.number()).optional(),
-    strict: z.boolean().optional(),
+    strict: z.boolean().default(false),
   }),
 });
 export type ReviewGateConfig = z.infer<typeof ReviewGateConfigSchema>;
@@ -81,24 +107,49 @@ export const HumanGateStageSchema = z.object({
 });
 export type HumanGateStageConfig = z.infer<typeof HumanGateStageSchema>;
 
+export const ShellStageSchema = z.object({
+  id: z.string(),
+  type: z.literal("shell"),
+  command: z.string(),
+  on_failure: z.enum(["fail", "continue"]).default("fail"),
+});
+export type ShellStageConfig = z.infer<typeof ShellStageSchema>;
+
 export const StageConfigSchema = z.discriminatedUnion("type", [
   RalphLoopStageSchema,
   BrainstormStageSchema,
   SpecStageSchema,
   PlanStageSchema,
   HumanGateStageSchema,
+  ShellStageSchema,
 ]);
 export type StageConfig = z.infer<typeof StageConfigSchema>;
 
 export const BudgetConfigSchema = z.object({
   max_cost_usd: z.number().positive(),
+  max_retry_steps: z.number().int().positive().default(5),
+  max_token_cost: z.number().positive().optional(),
   warn_at_pct: z.array(z.number().positive().max(1)).optional(),
 });
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
 export const PipelineConfigSchema = z.object({
   name: z.string(),
+  autonomy: z.enum(["interactive", "gated", "full"]).default("gated"),
+  isolation: z.enum(["none", "worktree"]).optional(),
   budget: BudgetConfigSchema.optional(),
   stages: z.array(StageConfigSchema).min(1),
 });
 export type PipelineConfig = z.infer<typeof PipelineConfigSchema>;
+
+export const ProjectConfigSchema = z.object({
+  max_drift_files: z.number().int().positive().default(50),
+  default_checks: z.array(z.string()).optional(),
+  dashboard: z
+    .object({
+      port: z.number().int().positive().default(3000),
+      host: z.string().default("127.0.0.1"),
+    })
+    .optional(),
+});
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
