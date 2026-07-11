@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
 import { parseOpenSpec as realParseOpenSpec, lintOpenSpec as realLintOpenSpec } from "../openspec/parser";
+import { parseOpenSpec as parseOpenSpecSimple } from "../spec/parse";
 import type { OpenSpec } from "../openspec/schema";
 import { registerArtifact as realRegisterArtifact } from "../specboard/specboard";
 import { setSpecHash } from "../specboard/specboard";
@@ -101,9 +102,18 @@ export async function runSpecStage(
       if (lintErrors.length > 0) {
         result = "fail";
       } else {
-        specHash = hashSpecFile(outputPath);
-        if (specHash) setSpecHash(runDir, specHash);
-        registerArtifact(runDir, "spec", stageConfig.output);
+        // Additional structural lint using the simple parser
+        const simpleParsed = parseOpenSpecSimple(specText);
+        const idSet = new Set(simpleParsed.tasks.map((t) => t.id));
+        if (idSet.size !== simpleParsed.tasks.length) {
+          result = "fail";
+        } else if (simpleParsed.tasks.some((t) => t.acceptance.length === 0)) {
+          result = "fail";
+        } else {
+          specHash = hashSpecFile(outputPath);
+          if (specHash) setSpecHash(runDir, specHash);
+          registerArtifact(runDir, "spec", stageConfig.output);
+        }
       }
     }
   }

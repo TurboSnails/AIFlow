@@ -11,17 +11,17 @@ function makeRunDir(runId: string): string {
   return runDir;
 }
 
-test("returns no_runs when there are no runs", () => {
+test("returns no_runs when there are no runs", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-abort-empty-"));
   try {
-    const result = runAbort(dir, {});
+    const result = await runAbort(dir, {});
     expect(result.status).toBe("no_runs");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("aborts a running run and emits run_aborted event", () => {
+test("aborts a running run and emits run_aborted event", async () => {
   const runId = "20260101_120000_test";
   const runDir = makeRunDir(runId);
   const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
@@ -38,7 +38,7 @@ test("aborts a running run and emits run_aborted event", () => {
     };
     writeFileSync(join(runDir, "state.json"), JSON.stringify(state));
 
-    const result = runAbort(dir, { runId });
+    const result = await runAbort(dir, { runId });
 
     expect(result.status).toBe("aborted");
     expect(result.runId).toBe(runId);
@@ -55,7 +55,7 @@ test("aborts a running run and emits run_aborted event", () => {
   }
 });
 
-test("uses latest run when runId is omitted", () => {
+test("uses latest run when runId is omitted", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-abort-latest-"));
   try {
     const runDir = join(dir, ".aiflow", "runs", "20260101_120000_latest");
@@ -65,7 +65,7 @@ test("uses latest run when runId is omitted", () => {
       JSON.stringify({ run_id: "20260101_120000_latest", pipeline: "dev", stages: [{ id: "s1", status: "running" }], cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 } })
     );
 
-    const result = runAbort(dir, {});
+    const result = await runAbort(dir, {});
 
     expect(result.status).toBe("aborted");
     expect(result.runId).toBe("20260101_120000_latest");
@@ -74,7 +74,7 @@ test("uses latest run when runId is omitted", () => {
   }
 });
 
-test("aborts waiting_human stages", () => {
+test("aborts waiting_human stages", async () => {
   const runId = "20260101_120000_wait";
   const runDir = makeRunDir(runId);
   const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
@@ -89,7 +89,7 @@ test("aborts waiting_human stages", () => {
       })
     );
 
-    const result = runAbort(dir, { runId });
+    const result = await runAbort(dir, { runId });
 
     expect(result.status).toBe("aborted");
     const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
@@ -99,7 +99,7 @@ test("aborts waiting_human stages", () => {
   }
 });
 
-test("leaves terminal stages unchanged", () => {
+test("leaves terminal stages unchanged", async () => {
   const runId = "20260101_120000_term";
   const runDir = makeRunDir(runId);
   const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
@@ -118,7 +118,7 @@ test("leaves terminal stages unchanged", () => {
       })
     );
 
-    const result = runAbort(dir, { runId });
+    const result = await runAbort(dir, { runId });
 
     expect(result.status).toBe("aborted");
     const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
@@ -128,7 +128,7 @@ test("leaves terminal stages unchanged", () => {
   }
 });
 
-test("aborts paused stages", () => {
+test("aborts paused stages", async () => {
   const runId = "20260101_120000_paused";
   const runDir = makeRunDir(runId);
   const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
@@ -146,11 +146,36 @@ test("aborts paused stages", () => {
       })
     );
 
-    const result = runAbort(dir, { runId });
+    const result = await runAbort(dir, { runId });
 
     expect(result.status).toBe("aborted");
     const updated = JSON.parse(readFileSync(join(runDir, "state.json"), "utf-8"));
     expect(updated.stages.map((s: { status: string }) => s.status)).toEqual(["done", "aborted"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("returns state in result when aborted", async () => {
+  const runId = "20260101_120000_state";
+  const runDir = makeRunDir(runId);
+  const dir = runDir.replace(/\.aiflow\/runs\/[^/]+$/, "");
+  try {
+    writeFileSync(
+      join(runDir, "state.json"),
+      JSON.stringify({
+        run_id: runId,
+        pipeline: "dev",
+        stages: [{ id: "s1", status: "running" }],
+        cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+      })
+    );
+
+    const result = await runAbort(dir, { runId });
+
+    expect(result.status).toBe("aborted");
+    expect(result.state).toBeDefined();
+    expect(result.state?.stages[0].status).toBe("aborted");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

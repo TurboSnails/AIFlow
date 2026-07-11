@@ -1,9 +1,43 @@
 import { join } from "node:path";
+import { $ } from "bun";
 import { callReviewer as realCallReviewer, type ReviewerCallResult } from "../llm/client";
 import { loadModelsConfig as realLoadModelsConfig, loadProjectConfig as realLoadProjectConfig } from "../config/loader";
 import { listStaleWorktrees as realListStaleWorktrees } from "../worktree/manager";
 import type { ModelProfile, ModelsConfig, ProjectConfig } from "../config/schema";
 import type { WorktreeEntry } from "../worktree/manager";
+
+export interface Diagnosis {
+  check: string;
+  ok: boolean;
+  message: string;
+}
+
+export async function runDoctor(cwd: string): Promise<Diagnosis[]> {
+  const results: Diagnosis[] = [];
+  // OpenCode CLI
+  try {
+    const { exitCode } = await $`opencode --version`.cwd(cwd).nothrow().quiet();
+    results.push({ check: "opencode_cli", ok: exitCode === 0, message: exitCode === 0 ? "ok" : "opencode not found" });
+  } catch {
+    results.push({ check: "opencode_cli", ok: false, message: "opencode --version failed" });
+  }
+  // 模型 profile 连通性（至少能解析配置）
+  const modelsPath = join(cwd, ".aiflow", "config", "models.yaml");
+  try {
+    realLoadModelsConfig(modelsPath);
+    results.push({ check: "models_config", ok: true, message: "models.yaml parsed" });
+  } catch (e) {
+    results.push({ check: "models_config", ok: false, message: String(e) });
+  }
+  // git
+  try {
+    const { exitCode } = await $`git status`.cwd(cwd).nothrow().quiet();
+    results.push({ check: "git", ok: exitCode === 0, message: exitCode === 0 ? "ok" : "not a git repo" });
+  } catch {
+    results.push({ check: "git", ok: false, message: "git status failed" });
+  }
+  return results;
+}
 
 export interface DoctorReport {
   openCodeVersion: string | null;
