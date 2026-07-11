@@ -96,14 +96,13 @@ test("collector ingests new events on file change", async () => {
   const runDir = join(runsRoot, "r1");
   mkdirSync(runDir);
   writeFileSync(join(runDir, "events.jsonl"), "\n");
-  const dbPath = join(runsRoot, "dashboard.sqlite");
-  const collector = startCollector(runsRoot, dbPath, { usePolling: true, interval: 20, awaitWriteFinish: false });
+  const db = createDb(":memory:");
+  const collector = startCollector(runsRoot, db, { usePolling: true, interval: 20, awaitWriteFinish: false });
 
   await new Promise((resolve) => setTimeout(resolve, 150));
   appendFileSync(join(runDir, "events.jsonl"), JSON.stringify({ ts: "2026-07-10T00:00:00Z", type: "stage_start" }) + "\n");
   await new Promise((resolve) => setTimeout(resolve, 250));
 
-  const db = createDb(dbPath);
   const events = getEventsForRun(db, "r1");
   expect(events.length).toBe(1);
   expect(events[0].type).toBe("stage_start");

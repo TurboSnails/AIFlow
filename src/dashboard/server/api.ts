@@ -7,14 +7,22 @@ import { getRuns, getEventsForRun, getStagesForRun, getCostForRun } from "./db";
 import { readEvents } from "../../events/events";
 import { readSpecBoard } from "../../specboard/specboard";
 import { readGateAnswer, writeGateAnswer } from "../../gate-answer/answer";
+import { runApprove } from "../../commands/approve";
 import type { EngineState } from "../../engine/state";
 
 export interface ApiDeps {
   db: Database;
   runsRoot?: string;
+  runApprove?: typeof runApprove;
 }
 
 const GateAnswerSchema = z.object({
+  action: z.enum(["approve", "reject"]),
+  reason: z.string().optional(),
+});
+
+const GateAnswerBodySchema = z.object({
+  stage: z.string(),
   action: z.enum(["approve", "reject"]),
   reason: z.string().optional(),
 });
@@ -200,6 +208,45 @@ export function createApp(deps: ApiDeps): Express {
     } finally {
       lock.release();
     }
+  });
+
+  app.post("/api/runs/:runId/gate-answer", async (req: Request, res: Response) => {
+    if (!deps.runsRoot) {
+      res.status(503).json({ error: "runsRoot not configured" });
+      return;
+    }
+    const runDir = safeRunDir(deps.runsRoot, req.params.runId as string);
+    if (!runDir) {
+      res.status(404).json({ error: "run not found" });
+      return;
+    }
+    const parse = GateAnswerBodySchema.safeParse(req.body);
+    if (!parse.success) {
+      res.status(400).json({ error: "invalid body" });
+      return;
+    }
+    const answer = parse.data;
+    const existing = readGateAnswer(runDir);
+    writeGateAnswer(runDir, {
+      stage: answer.stage,
+      prompt: existing?.prompt ?? "",
+      status: "answered",
+      answered_at: new Date().toISOString(),
+      action: answer.action,
+      reason: answer.reason ?? null,
+    });
+    // resume asynchronously so the HTTP response returns immediately
+    const cwd = dirname(dirname(deps.runsRoot));
+    (deps.runApprove ?? runApprove)(cwd, { runId: req.params.runId as string, stage: answer.stage }).catch((err: unknown) => {
+      console.error("gate-answer resume failed", err);
+    });
+    res.json({ ok: true });
+  });
+
+  const clientDist = join(dirname(import.meta.dir), "client", "dist");
+  app.use(express.static(clientDist));
+  app.get("/{*splat}", (_req: Request, res: Response) => {
+    res.sendFile(join(clientDist, "index.html"));
   });
 
   return app;

@@ -1,6 +1,7 @@
 import chokidar from "chokidar";
 import { basename, dirname } from "node:path";
-import { createDb, tailRun } from "./db";
+import { Database } from "bun:sqlite";
+import { tailRun } from "./db";
 
 export interface Broadcaster {
   broadcast(event: object): void;
@@ -16,13 +17,11 @@ function isEventsJsonl(path: string): boolean {
 
 export function startCollector(
   runsRoot: string,
-  dbPath: string,
+  db: Database,
   options?: Parameters<typeof chokidar.watch>[1],
   broadcaster?: Broadcaster,
 ): Collector {
-  const db = createDb(dbPath);
   const watcher = chokidar.watch(runsRoot, {
-    ignored: dbPath,
     ignoreInitial: false,
     depth: 2,
     awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 20 },
@@ -41,7 +40,6 @@ export function startCollector(
   return {
     close: async () => {
       await watcher.close();
-      db.close();
     },
   };
 }

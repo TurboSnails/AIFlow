@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -312,4 +312,50 @@ test("malicious run id with dots and slashes returns 400", async () => {
   const app = createApp({ db, runsRoot });
   const res = await request(app).get("/api/runs/r1..r2");
   expect(res.status).toBe(400);
+});
+
+test("gate-answer endpoint writes answer and resumes pipeline", async () => {
+  const { runsRoot } = setupProject("api-runs-");
+  const runId = "r1";
+  const gateStage = "plan";
+  const runApproveMock = mock(async () => ({ status: "resumed" as const }));
+  const runDir = setupRun(runsRoot, runId, "waiting_human");
+  const db = createDb(":memory:");
+  ingestEvents(db, runDir);
+
+  const app = createApp({ db, runsRoot, runApprove: runApproveMock });
+  const res = await request(app)
+    .post(`/api/runs/${runId}/gate-answer`)
+    .send({ stage: gateStage, action: "approve" });
+  expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(runApproveMock).toHaveBeenCalled();
+});
+
+test("gate-answer endpoint returns 404 for invalid run id", async () => {
+  const { runsRoot } = setupProject("api-runs-");
+  const db = createDb(":memory:");
+  const runApproveMock = mock(async () => ({ status: "resumed" as const }));
+
+  const app = createApp({ db, runsRoot, runApprove: runApproveMock });
+  const res = await request(app)
+    .post("/api/runs/../../etc/gate-answer")
+    .send({ stage: "plan", action: "approve" });
+  expect(res.status).toBe(404);
+  expect(runApproveMock).not.toHaveBeenCalled();
+});
+
+test("gate-answer endpoint returns 400 for missing stage in body", async () => {
+  const { runsRoot } = setupProject("api-runs-");
+  const runDir = setupRun(runsRoot, "r1", "waiting_human");
+  const db = createDb(":memory:");
+  ingestEvents(db, runDir);
+  const runApproveMock = mock(async () => ({ status: "resumed" as const }));
+
+  const app = createApp({ db, runsRoot, runApprove: runApproveMock });
+  const res = await request(app)
+    .post("/api/runs/r1/gate-answer")
+    .send({ action: "approve" }); // missing stage
+  expect(res.status).toBe(400);
+  expect(runApproveMock).not.toHaveBeenCalled();
 });

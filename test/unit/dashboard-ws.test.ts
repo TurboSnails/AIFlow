@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { WebSocket } from "ws";
 import { broadcastEvent } from "../../src/dashboard/server/ws";
 import { startCollector } from "../../src/dashboard/server/collector";
+import { createDb } from "../../src/dashboard/server/db";
 
 test("broadcastEvent sends JSON to ready clients", () => {
   const messages: string[] = [];
@@ -23,11 +24,11 @@ test("collector broadcasts new events wrapped with run_id", async () => {
   mkdirSync(runDir);
   writeFileSync(join(runDir, "events.jsonl"), "\n");
 
-  const dbPath = join(runsRoot, "dashboard.db");
+  const db = createDb(":memory:");
   const broadcasts: object[] = [];
   const collector = startCollector(
     runsRoot,
-    dbPath,
+    db,
     { usePolling: true, interval: 20, awaitWriteFinish: false },
     { broadcast: (event: object) => broadcasts.push(event) }
   );
@@ -54,11 +55,11 @@ test("collector broadcasts only include the run_id from the changed run director
   writeFileSync(join(runDir1, "events.jsonl"), "\n");
   writeFileSync(join(runDir2, "events.jsonl"), "\n");
 
-  const dbPath = join(runsRoot, "dashboard.db");
+  const db2 = createDb(":memory:");
   const broadcasts: object[] = [];
   const collector = startCollector(
     runsRoot,
-    dbPath,
+    db2,
     { usePolling: true, interval: 20, awaitWriteFinish: false },
     { broadcast: (event: object) => broadcasts.push(event) }
   );

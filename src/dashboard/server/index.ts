@@ -20,7 +20,7 @@ export async function startDashboardServer(
   const app = createApp({ db, runsRoot });
   const server = createServer(app);
   const wss = new WebSocketServer({ server });
-  const collector = startCollector(runsRoot, dbPath, undefined, {
+  const collector = startCollector(runsRoot, db, { ignored: dbPath }, {
     broadcast: (event: object) => broadcastEvent(wss, event),
   });
 
