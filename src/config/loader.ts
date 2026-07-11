@@ -1,10 +1,18 @@
 import { parse as parseYaml } from "yaml";
 import { readFileSync } from "node:fs";
 import { ModelsConfigSchema, PipelineConfigSchema, ProjectConfigSchema, type ModelsConfig, type PipelineConfig, type ProjectConfig } from "./schema";
+import { sanitizeSecrets } from "../commands/report";
 
 export function loadModelsConfig(path: string): ModelsConfig {
   const raw = parseYaml(readFileSync(path, "utf-8"));
-  return ModelsConfigSchema.parse(raw);
+  try {
+    return ModelsConfigSchema.parse(raw);
+  } catch (err) {
+    if (err instanceof Error) {
+      throw new Error(sanitizeSecrets(err.message));
+    }
+    throw err;
+  }
 }
 
 export function loadPipelineConfig(path: string): PipelineConfig {

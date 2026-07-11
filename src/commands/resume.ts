@@ -7,7 +7,7 @@ import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/en
 import type { EngineState } from "../engine/state";
 import { writeStateAtomic } from "../engine/state";
 import { assertCleanIfAutoClean } from "./dirty-guard";
-import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
+import { acquireRunLock, type AcquireLockOptions } from "../lock";
 
 export interface ResumeResult {
   status: "resumed" | "noop_terminal" | "no_runs" | "missing_run_dir";
@@ -31,14 +31,7 @@ export async function runResume(
     return { status: "missing_run_dir", runId, message: `Run directory ${runDir} exists but has no state.json` };
   }
 
-  let lock = { release: () => {} };
-  let ownLock = false;
-  try {
-    lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
-    ownLock = true;
-  } catch (err) {
-    if (!(err instanceof LockWaitAbortedError)) throw err;
-  }
+  const lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
   try {
   const persisted = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const pipelineName = opts.pipeline ?? persisted.pipeline;
@@ -77,6 +70,6 @@ export async function runResume(
   if (wasTerminal && !opts.force) return { status: "noop_terminal", state, runId };
   return { status: "resumed", state, runId };
   } finally {
-    if (ownLock) lock.release();
+    lock.release();
   }
 }

@@ -59,16 +59,23 @@ const defaultDeps: RalphLoopDeps = {
   maxDriftFiles: 50,
 };
 
-export function assertTamperGuard(cwd: string, runDir: string): void {
-  const board = realReadSpecBoard(runDir);
+export function assertTamperGuard(
+  cwd: string,
+  runDir: string,
+  deps?: Pick<RalphLoopDeps, "readSpecBoard" | "hashSpecFile" | "hashConfigDir">
+): void {
+  const readSpecBoardFn = deps?.readSpecBoard ?? realReadSpecBoard;
+  const hashSpecFileFn = deps?.hashSpecFile ?? realHashSpecFile;
+  const hashConfigDirFn = deps?.hashConfigDir ?? realHashConfigDir;
+  const board = readSpecBoardFn(runDir);
   if (board.spec_hash) {
-    const currentSpecHash = realHashSpecFile(join(cwd, "spec.md"));
+    const currentSpecHash = hashSpecFileFn(join(cwd, "spec.md"));
     if (currentSpecHash !== board.spec_hash) {
       throw new Error(`Spec hash mismatch: spec.md was modified after the spec stage.`);
     }
   }
   if (board.config_hash) {
-    const currentConfigHash = realHashConfigDir(cwd);
+    const currentConfigHash = hashConfigDirFn(cwd);
     if (currentConfigHash !== board.config_hash) {
       throw new Error(`Config hash mismatch: .aiflow/config was modified after run start.`);
     }
@@ -451,7 +458,7 @@ export async function runRalphLoop(
   const prdPath = join(cwd, "prd.json");
 
   while (true) {
-    assertTamperGuard(cwd, runDir);
+    assertTamperGuard(cwd, runDir, deps);
     const prd = readPrd(prdPath);
 
     if (signal?.aborted) {

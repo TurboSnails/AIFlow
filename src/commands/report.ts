@@ -8,7 +8,7 @@ import { writeFileAtomic } from "../atomic/atomic-write";
 
 export function sanitizeSecrets(text: string): string {
   return text
-    .replace(/\b(sk-[a-zA-Z0-9]{20,})\b/g, "***")
+    .replace(/\b(sk-[a-zA-Z0-9-]{20,})\b/g, "***")
     .replace(/\b(ANTHROPIC_API_KEY|OPENAI_API_KEY|OPEN_CODE_API_KEY)\s*=\s*[^\s]+/g, "$1=***")
     .replace(/"api_key"\s*:\s*"[^"]+"/g, '"api_key":"***"');
 }

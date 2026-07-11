@@ -156,6 +156,13 @@ describe("sanitizeSecrets", () => {
     expect(sanitizeSecrets(dirty)).not.toMatch(/sk-abc/);
   });
 
+  test("sanitizes real Anthropic API key format with dashes in body", () => {
+    // Real Anthropic keys have the form sk-ant-api03-XXXX… — dashes in body
+    const dirty = "key: sk-ant-api03-abc12345678901234567";
+    expect(sanitizeSecrets(dirty)).toContain("***");
+    expect(sanitizeSecrets(dirty)).not.toMatch(/sk-ant-api03/);
+  });
+
   test("sanitizes short sk- keys that are below threshold (no match)", () => {
     // sk- followed by fewer than 20 alphanumerics — should NOT be replaced
     const short = "sk-tooshort";

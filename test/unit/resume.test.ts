@@ -78,7 +78,7 @@ describe("runResume", () => {
     }
   }, 60_000);
 
-  test("runResume stops with a paused stage when given an already-aborted signal", async () => {
+  test("runResume throws LockWaitAbortedError when given an already-aborted signal", async () => {
     const cwd = await copyFixture();
     try {
       const runId = "20260701_130000_abcd12";
@@ -99,9 +99,8 @@ describe("runResume", () => {
 
       const controller = new AbortController();
       controller.abort();
-      const result = await runResume(cwd, { runId }, undefined, controller.signal);
-      expect(result.status).toBe("resumed");
-      expect(result.state!.stages[0].status).toBe("paused");
+      // LockWaitAbortedError now propagates — the CLI handles it and exits cleanly
+      await expect(runResume(cwd, { runId }, undefined, controller.signal)).rejects.toThrow("Aborted while waiting for run lock");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

@@ -12,7 +12,7 @@ import { callLlm, type LlmCallResult } from "../llm/client";
 import { resolveOpenQuestions, readSpecBoard } from "../specboard/specboard";
 import type { SpecBoard } from "../specboard/types";
 import type { ModelProfile, ProjectConfig, BudgetConfig } from "../config/schema";
-import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
+import { acquireRunLock, type AcquireLockOptions } from "../lock";
 
 
 export interface ApproveResult {
@@ -96,14 +96,7 @@ export async function runApprove(
     return { status: "missing_run_dir", runId, message: `Run directory ${runDir} exists but has no state.json` };
   }
 
-  let lock = { release: () => {} };
-  let ownLock = false;
-  try {
-    lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
-    ownLock = true;
-  } catch (err) {
-    if (!(err instanceof LockWaitAbortedError)) throw err;
-  }
+  const lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
   try {
   let state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const waitingStages = state.stages.filter((s) => s.status === "waiting_human");
@@ -209,6 +202,6 @@ export async function runApprove(
 
   return { status: "resumed", state: resultState, runId };
   } finally {
-    if (ownLock) lock.release();
+    lock.release();
   }
 }
