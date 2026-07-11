@@ -297,6 +297,7 @@ describe("tryMergeBack git error handling", () => {
 describe("resume worktree re-entry", () => {
   test("resume uses worktree path from state.json", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "aiflow-resume-worktree-cwd-"));
+    let worktreePath: string | undefined;
     try {
       mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
       writeFileSync(
@@ -311,7 +312,7 @@ describe("resume worktree re-entry", () => {
       const runId = "20260710_120000_test01";
       const runDir = join(cwd, ".aiflow", "runs", runId);
       mkdirSync(runDir, { recursive: true });
-      const worktreePath = mkdtempSync(join(tmpdir(), "aiflow-resume-worktree-path-"));
+      worktreePath = mkdtempSync(join(tmpdir(), "aiflow-resume-worktree-path-"));
       writeFileSync(
         join(runDir, "state.json"),
         JSON.stringify({
@@ -335,6 +336,54 @@ describe("resume worktree re-entry", () => {
 
       expect(result.status).toBe("resumed");
       expect(recordedCwd).toBe(worktreePath);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      if (worktreePath) rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  test("resume falls back to cwd when worktree path is missing or invalid", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "aiflow-resume-fallback-cwd-"));
+    let worktreePath: string | undefined;
+    try {
+      mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "models.yaml"),
+        "profiles:\n  main-dev:\n    channel: http\n    provider: x\n    model: y\n    base_url: http://localhost\n    api_key_env: API_KEY\n"
+      );
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "pipelines", "test.yaml"),
+        "name: test\nstages:\n  - id: step\n    type: shell\n    command: echo ok\n"
+      );
+
+      const runId = "20260710_120000_test02";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      worktreePath = mkdtempSync(join(tmpdir(), "aiflow-resume-fallback-path-"));
+      rmSync(worktreePath, { recursive: true, force: true });
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runId,
+          pipeline: "test",
+          worktree: { path: worktreePath },
+          stages: [{ id: "step", status: "pending" }],
+          cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+        })
+      );
+
+      let recordedCwd: string | undefined;
+      const result = await runResume(cwd, { runId }, {
+        runners: {
+          shell: async (_stageConfig, _stageState, _profiles, stageCwd) => {
+            recordedCwd = stageCwd;
+            return { result: "pass", usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+          },
+        },
+      });
+
+      expect(result.status).toBe("resumed");
+      expect(recordedCwd).toBe(cwd);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -367,7 +416,7 @@ describe("resolveConflictWithAI", () => {
         base_url: "http://localhost",
         api_key_env: "API_KEY",
       };
-      const result = await resolveConflictWithAI(ctx, profile, "gated", join(dir, "run"), deps);
+      const result = await resolveConflictWithAI(ctx, profile, "gated", deps);
       expect(result).toBe("resolved");
       expect(recorded.some((c) => c.args[0] === "add" && c.args[1] === "src/a.ts")).toBe(true);
       expect(recorded.some((c) => c.args[0] === "commit" && c.args.includes("aiflow: resolve conflicts via main-dev"))).toBe(true);
@@ -394,7 +443,7 @@ describe("resolveConflictWithAI", () => {
         base_url: "http://localhost",
         api_key_env: "API_KEY",
       };
-      const result = await resolveConflictWithAI(ctx, profile, "gated", join(dir, "run"), deps);
+      const result = await resolveConflictWithAI(ctx, profile, "gated", deps);
       expect(result).toBe("escalated");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -420,8 +469,93 @@ describe("resolveConflictWithAI", () => {
         base_url: "http://localhost",
         api_key_env: "API_KEY",
       };
-      const result = await resolveConflictWithAI(ctx, profile, "full", join(dir, "run"), deps);
+      const result = await resolveConflictWithAI(ctx, profile, "full", deps);
       expect(result).toBe("aborted");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns escalated when AI returns a path outside baseCwd", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-outside-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "a.ts"), "conflict");
+      const deps = {
+        runGit: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        diffConflictFileNames: async () => ["src/a.ts"],
+        callLlm: async () => ({
+          text: JSON.stringify({ files: [{ path: "../b.ts", content: "resolved" }] }),
+          usage: { inTok: 0, outTok: 0, costUsd: 0 },
+        }),
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "gated", deps);
+      expect(result).toBe("escalated");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns escalated when AI returns a path not in conflict files", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-unknown-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "a.ts"), "conflict");
+      const deps = {
+        runGit: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        diffConflictFileNames: async () => ["src/a.ts"],
+        callLlm: async () => ({
+          text: JSON.stringify({ files: [{ path: "src/b.ts", content: "resolved" }] }),
+          usage: { inTok: 0, outTok: 0, costUsd: 0 },
+        }),
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "gated", deps);
+      expect(result).toBe("escalated");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns escalated when AI omits a conflict file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-incomplete-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "a.ts"), "conflict");
+      writeFileSync(join(dir, "src", "b.ts"), "conflict");
+      const deps = {
+        runGit: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        diffConflictFileNames: async () => ["src/a.ts", "src/b.ts"],
+        callLlm: async () => ({
+          text: JSON.stringify({ files: [{ path: "src/a.ts", content: "resolved" }] }),
+          usage: { inTok: 0, outTok: 0, costUsd: 0 },
+        }),
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "gated", deps);
+      expect(result).toBe("escalated");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -290,13 +290,12 @@ export async function runCommand(
               worktreeCtx,
               mainDev,
               pipelineAutonomy,
-              runDir,
               {
                 callLlm: callLlmFn,
                 diffConflictFileNames: conflictFilesFn,
                 maxRetrySteps: pipelineConfig.budget?.max_retry_steps,
                 maxTokenCost: pipelineConfig.budget?.max_token_cost,
-              } as any
+              }
             );
             if (resolution === "resolved") {
               appendEvent(runDir, {
@@ -330,7 +329,7 @@ export async function runCommand(
               result.stages.push({
                 id: "merge-conflict",
                 status: "waiting_human",
-                reason: "merge_conflict_unarbitrable" as any,
+                reason: "merge_conflict_unarbitrable",
               });
               writeStateAtomic(runDir, result);
               appendEvent(runDir, {

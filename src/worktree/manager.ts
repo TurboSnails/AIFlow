@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, relative } from "node:path";
 import { callLlm } from "../llm/client";
 import type { ModelProfile } from "../config/schema";
 import { diffConflictFileNames as realDiffConflictFileNames } from "../git";
@@ -158,12 +158,13 @@ export async function resolveConflict(
   return exitCode === 0 ? "aborted" : "failed";
 }
 
+class ConflictResolutionValidationError extends Error {}
+
 export async function resolveConflictWithAI(
   ctx: WorktreeContext,
   mainDevProfile: ModelProfile,
   autonomy: string,
-  runDir: string,
-  deps: Partial<ResolveConflictDeps> = defaultResolveDeps as any
+  deps: Partial<ResolveConflictDeps> = defaultResolveDeps
 ): Promise<"resolved" | "aborted" | "escalated"> {
   const d = { ...defaultResolveDeps, ...deps };
   const baseCwd = ctx.baseCwd ?? ctx.originalCwd;
@@ -177,14 +178,33 @@ export async function resolveConflictWithAI(
       maxRetrySteps: d.maxRetrySteps,
       maxTokenCost: d.maxTokenCost,
     });
-    const data = JSON.parse(result.text) as { files: Array<{ path: string; content: string }> };
-    if (!Array.isArray(data.files)) {
-      throw new Error("AI conflict resolution response missing files array");
+    let data: { files: Array<{ path: string; content: string }> };
+    try {
+      data = JSON.parse(result.text);
+    } catch {
+      throw new ConflictResolutionValidationError("AI conflict resolution response is not valid JSON");
     }
+    if (!Array.isArray(data.files)) {
+      throw new ConflictResolutionValidationError("AI conflict resolution response missing files array");
+    }
+    const conflictSet = new Set(conflictFiles);
+    const resolvedPaths = new Set<string>();
     for (const f of data.files) {
       if (typeof f.path !== "string" || typeof f.content !== "string") {
-        throw new Error("AI conflict resolution file entry missing path or content");
+        throw new ConflictResolutionValidationError("AI conflict resolution file entry missing path or content");
       }
+      const resolvedPath = resolve(baseCwd, f.path);
+      const relativeToBase = relative(baseCwd, resolvedPath);
+      if (relativeToBase.startsWith("..") || relativeToBase === "") {
+        throw new ConflictResolutionValidationError(`AI conflict resolution path outside baseCwd: ${f.path}`);
+      }
+      if (!conflictSet.has(f.path)) {
+        throw new ConflictResolutionValidationError(`AI conflict resolution path not in conflict files: ${f.path}`);
+      }
+      resolvedPaths.add(f.path);
+    }
+    if (resolvedPaths.size !== conflictFiles.length) {
+      throw new ConflictResolutionValidationError("AI conflict resolution missing files");
     }
     for (const f of data.files) {
       writeFileSync(join(baseCwd, f.path), f.content);
@@ -192,8 +212,9 @@ export async function resolveConflictWithAI(
     }
     await d.runGit(baseCwd, ["commit", "-m", "aiflow: resolve conflicts via main-dev"]);
     return "resolved";
-  } catch {
+  } catch (err) {
     await d.runGit(baseCwd, ["merge", "--abort"]);
+    if (err instanceof ConflictResolutionValidationError) return "escalated";
     return autonomy === "full" ? "aborted" : "escalated";
   }
 }
