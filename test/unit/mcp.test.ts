@@ -30,7 +30,7 @@ test("listTools exposes expected aiflow tools", () => {
   expect(names).toContain("aiflow_status");
   expect(names).toContain("aiflow_run");
   expect(names).toContain("aiflow_brainstorm");
-  expect(names).not.toContain("aiflow_review_diff");
+  expect(names).toContain("aiflow_review_diff");
 });
 
 test("run tool invokes aiflow with --pipeline", async () => {

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "aiflow": "src/cli.ts"
+  },
   "scripts": {
     "cli": "bun run src/cli.ts"
   },
