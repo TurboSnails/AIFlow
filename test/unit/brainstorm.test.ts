@@ -67,6 +67,9 @@ test("independent mode: both models succeed, synthesis is written, result is pas
     expect(content).toContain("synthesis text");
     expect(content).toContain("proposal A");
     expect(content).toContain("proposal B");
+    expect(content).toContain("## Comparison Matrix");
+    expect(content).toContain("## Recommendation");
+    expect(content).toContain("| Model | Key Design | Risks | Workload |");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
@@ -121,6 +124,9 @@ test("debate mode: writes report, registers artifact, and records decisions/open
     const report = readFileSync(reportPath, "utf-8");
     expect(report).toContain("D1");
     expect(report).toContain("Q1");
+    expect(report).toContain("## Comparison Matrix");
+    expect(report).toContain("## Recommendation");
+    expect(report).toContain("| Model | Key Design | Risks | Workload |");
 
     const board = readSpecBoard(runDir);
     expect(board.artifacts["brainstorm-report"]).toBe("artifacts/debate-report.md");

@@ -69,8 +69,9 @@ test("debate converges in two rounds", async () => {
   expect(result.decisions[0]).toMatchObject({ id: "D0", topic: "t", resolution: "r" });
   expect(result.rounds).toBeGreaterThanOrEqual(1);
   expect(result.report).toBeTruthy();
-  expect(result.report).toContain("## Comparison Matrix");
-  expect(result.report).toContain("## Recommendation");
+  expect(result.report).toContain("# Debate Report");
+  expect(result.report).toContain("## Decisions");
+  expect(result.report).toContain("## Open Questions");
 });
 
 test("debate stops early when disputes diverge", async () => {

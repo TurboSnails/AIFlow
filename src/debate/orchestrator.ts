@@ -6,6 +6,7 @@ import type { BudgetTracker } from "../gate/budget";
 import type { OpenQuestion, Decision } from "../specboard/types";
 import {
   ModeratorOutputSchema,
+  RoundArtifactSchema,
   RoundProposalSchema,
   type RoundProposal,
   type DebateDispute,
@@ -46,6 +47,7 @@ export interface DebateOutcome extends DebateResult {
   overBudget: boolean;
   usage: Usage;
   roundSummaries: RoundSummary[];
+  proposals: RoundProposal[];
   /** Raw moderator output when the failure was caused by a moderator parse error. */
   rawModeratorText?: string;
 }
@@ -122,84 +124,13 @@ function persistRoundArtifact(
   moderator: unknown
 ): void {
   if (!runDir) return;
+  const artifact = RoundArtifactSchema.parse({ round, proposals, moderator });
   const debateDir = join(runDir, "artifacts", "debate");
   mkdirSync(debateDir, { recursive: true });
   writeFileSync(
     join(debateDir, `round-${round}.json`),
-    JSON.stringify({ round, proposals, moderator }, null, 2)
+    JSON.stringify(artifact, null, 2)
   );
-}
-
-function extractSection(content: string, headings: string[]): string {
-  const lines = content.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i].replace(/^#+\s*/, "").trim();
-    const match = headings.some((h) => lineText.toLowerCase().startsWith(h.toLowerCase()));
-    if (match) {
-      const end = lines.findIndex((line, idx) => idx > i && /^#+\s+/.test(line.trim()));
-      return lines
-        .slice(i + 1, end === -1 ? undefined : end)
-        .join("\n")
-        .trim();
-    }
-  }
-  return "";
-}
-
-function escapeCell(value: string): string {
-  return value
-    .replace(/\|/g, "\\|")
-    .replace(/\n+/g, " ")
-    .trim();
-}
-
-function renderComparisonMatrix(proposals: RoundProposal[]): string {
-  if (proposals.length === 0) {
-    return "## Comparison Matrix\n\nNo proposals available.\n";
-  }
-  const rows = proposals.map((p) => {
-    const keyDesign =
-      extractSection(p.content_md, ["Key Design", "Design Decisions"]) ||
-      p.content_md.split("\n")[0] ||
-      "(no content)";
-    const risks =
-      extractSection(p.content_md, ["Risks", "Risk"]) ||
-      p.critiques.map((c) => `${c.severity ?? "?"}: ${c.point}`).join("; ") ||
-      "(none listed)";
-    const workload =
-      extractSection(p.content_md, ["Effort", "Estimate", "Workload"]) ||
-      "(none listed)";
-    return `| ${escapeCell(p.author)} | ${escapeCell(keyDesign)} | ${escapeCell(risks)} | ${escapeCell(workload)} |`;
-  });
-  return [
-    "## Comparison Matrix",
-    "",
-    "| Model | Key Design | Risks | Workload |",
-    "| --- | --- | --- | --- |",
-    ...rows,
-  ].join("\n");
-}
-
-function renderRecommendation(
-  decisions: Decision[],
-  openQuestions: OpenQuestion[]
-): string {
-  const lines = ["## Recommendation", ""];
-  if (decisions.length > 0) {
-    lines.push(
-      `Adopt the ${decisions.length} resolved decision(s) and use the comparison matrix to select the implementation approach that best satisfies them.`
-    );
-  } else {
-    lines.push(
-      "No decisions were reached. Consider running another debate round or escalating the open questions."
-    );
-  }
-  if (openQuestions.length > 0) {
-    lines.push(
-      `Resolve the ${openQuestions.length} open question(s) before committing to an implementation.`
-    );
-  }
-  return lines.join("\n");
 }
 
 function renderProposalPrompt(requirement: string): string {
@@ -292,7 +223,6 @@ function renderModeratorPrompt(
 
 function renderReport(
   requirement: string,
-  proposals: RoundProposal[],
   decisions: Decision[],
   openQuestions: OpenQuestion[]
 ): string {
@@ -322,8 +252,6 @@ function renderReport(
       }
     }
   }
-  lines.push("", renderComparisonMatrix(proposals));
-  lines.push("", renderRecommendation(decisions, openQuestions));
   return lines.join("\n");
 }
 
@@ -398,7 +326,7 @@ export async function runDebateInternal(
       .filter((e) => e.ok && e.proposal)
       .map((e) => e.proposal!);
     return {
-      report: renderReport(requirement, proposals, [], []),
+      report: renderReport(requirement, [], []),
       openQuestions: [],
       decisions: [],
       rounds: 1,
@@ -408,6 +336,7 @@ export async function runDebateInternal(
       overBudget: false,
       usage,
       roundSummaries: [],
+      proposals,
     };
   }
 
@@ -419,7 +348,7 @@ export async function runDebateInternal(
       .filter((e) => e.ok && e.proposal)
       .map((e) => e.proposal!);
     return {
-      report: renderReport(requirement, proposals, [], []),
+      report: renderReport(requirement, [], []),
       openQuestions: [],
       decisions: [],
       rounds: 1,
@@ -429,6 +358,7 @@ export async function runDebateInternal(
       overBudget: true,
       usage,
       roundSummaries: [],
+      proposals,
     };
   }
 
@@ -451,7 +381,7 @@ export async function runDebateInternal(
           .filter((p) => p.critiques.some((c) => !c.severity || !c.point))
           .map((p) => p.author)
       );
-      if (vagueAuthors.size > 0 && roundNumber <= config.debate_rounds) {
+      if (vagueAuthors.size > 0) {
         const vagueProfiles = currentRound
           .filter((e) => e.ok && e.proposal && vagueAuthors.has(e.name))
           .map((e) => e.profile);
@@ -581,6 +511,7 @@ export async function runDebateInternal(
         overBudget: false,
         usage,
         roundSummaries,
+        proposals,
         rawModeratorText: moderatorResult.text,
       };
     }
@@ -641,7 +572,7 @@ export async function runDebateInternal(
       : [];
 
   const decisions = Array.from(resolvedById.values());
-  const report = renderReport(requirement, finalProposals, decisions, finalOpenQuestions);
+  const report = renderReport(requirement, decisions, finalOpenQuestions);
 
   return {
     report,
@@ -654,6 +585,7 @@ export async function runDebateInternal(
     overBudget,
     usage,
     roundSummaries,
+    proposals: finalProposals,
   };
 }
 

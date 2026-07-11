@@ -8,6 +8,8 @@ import type { BrainstormStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
 import { runDebateInternal, type DebateOutcome } from "../debate/orchestrator";
+import { RoundProposalSchema, type RoundProposal, type Critique } from "../debate/schemas";
+import type { Decision, OpenQuestion } from "../specboard/types";
 import { registerArtifact, addOpenQuestions, addDecisions } from "../specboard/specboard";
 
 type FanOutResult = { profile: ModelProfile; ok: boolean; result?: LlmCallResult; error?: string };
@@ -40,10 +42,143 @@ function sumUsage(rounds: FanOutResult[][], extra?: LlmCallResult) {
   return usage;
 }
 
+function cleanJsonText(text: string): string {
+  return text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+}
+
+function parseIndependentProposal(
+  rawText: string,
+  author: string,
+  profile_real: string
+): RoundProposal {
+  try {
+    const parsed = JSON.parse(cleanJsonText(rawText));
+    return RoundProposalSchema.parse({ ...(parsed as Record<string, unknown>), author, profile_real });
+  } catch {
+    return {
+      author,
+      profile_real,
+      content_md: rawText,
+      stance_changes: [],
+      critiques: [],
+    };
+  }
+}
+
+function extractSection(content: string, headings: string[]): string {
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i].replace(/^#+\s*/, "").trim();
+    const match = headings.some((h) => lineText.toLowerCase().startsWith(h.toLowerCase()));
+    if (match) {
+      const end = lines.findIndex((line, idx) => idx > i && /^#+\s+/.test(line.trim()));
+      return lines
+        .slice(i + 1, end === -1 ? undefined : end)
+        .join("\n")
+        .trim();
+    }
+  }
+  return "";
+}
+
+function escapeCell(value: string): string {
+  return value
+    .replace(/\|/g, "\\|")
+    .replace(/\n+/g, " ")
+    .trim();
+}
+
+function renderComparisonMatrix(proposals: RoundProposal[]): string {
+  if (proposals.length === 0) {
+    return "## Comparison Matrix\n\nNo proposals available.\n";
+  }
+  const rows = proposals.map((p) => {
+    const keyDesign =
+      extractSection(p.content_md, ["Key Design", "Design Decisions", "Solution Overview"]) ||
+      p.content_md.split("\n")[0] ||
+      "(no content)";
+    const risks =
+      extractSection(p.content_md, ["Risks", "Risk"]) ||
+      p.critiques.map((c) => `${c.severity ?? "?"}: ${c.point}`).join("; ") ||
+      "(none listed)";
+    const workload =
+      extractSection(p.content_md, ["Effort", "Estimate", "Workload"]) ||
+      "(none listed)";
+    return `| ${escapeCell(p.author)} | ${escapeCell(keyDesign)} | ${escapeCell(risks)} | ${escapeCell(workload)} |`;
+  });
+  return [
+    "## Comparison Matrix",
+    "",
+    "| Model | Key Design | Risks | Workload |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+  ].join("\n");
+}
+
+function severityWeight(severity?: string): number {
+  switch (severity) {
+    case "blocker":
+      return 4;
+    case "major":
+      return 3;
+    case "minor":
+      return 2;
+    case "nit":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function pickBestProposal(proposals: RoundProposal[]): RoundProposal {
+  let best = proposals[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const p of proposals) {
+    if (p.critiques.length === 0) continue;
+    const score = p.critiques.reduce((sum, c) => sum + severityWeight(c.severity), 0);
+    if (score < bestScore) {
+      best = p;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function renderRecommendation(
+  proposals: RoundProposal[],
+  decisions: Decision[] = [],
+  openQuestions: OpenQuestion[] = []
+): string {
+  const lines = ["## Recommendation", ""];
+  if (decisions.length > 0) {
+    lines.push(
+      `Adopt the ${decisions.length} resolved decision(s) and use the comparison matrix to select the implementation approach that best satisfies them.`
+    );
+  } else if (proposals.length > 0) {
+    const best = pickBestProposal(proposals);
+    const keyDesign =
+      extractSection(best.content_md, ["Key Design", "Design Decisions", "Solution Overview"]) ||
+      best.content_md.split("\n")[0] ||
+      "See comparison matrix.";
+    lines.push(`The recommended approach is from **${best.author}** (${best.profile_real}).`);
+    lines.push(`Key design: ${keyDesign}`);
+    lines.push(`Address the identified risks and workload before committing to an implementation.`);
+  } else {
+    lines.push("No proposals available to recommend.");
+  }
+  if (openQuestions.length > 0) {
+    lines.push(
+      `Resolve the ${openQuestions.length} open question(s) before committing to an implementation.`
+    );
+  }
+  return lines.join("\n");
+}
+
 function renderIdeaPrompt(requirement: string): string {
   return [
     "You are brainstorming an implementation approach for the following requirement.",
     "Produce: a concise solution overview, key design decisions, risks, and a rough effort estimate.",
+    "Use markdown headings for each section: Solution Overview, Key Design Decisions, Risks, and Effort Estimate.",
     "",
     "## Requirement",
     requirement,
@@ -56,12 +191,8 @@ function renderSynthesisPrompt(requirement: string, finalRound: FanOutResult[]):
     .map((r, i) => `### Model ${i + 1}\n${r.result!.text}`)
     .join("\n\n");
   return [
-    "Synthesize the following independent proposals into: a comparison matrix, a recommended approach, and a list of open questions.",
-    "",
-    "Use the following comparison matrix format:",
-    "",
-    "| Model | Key Design | Risks | Workload |",
-    "| --- | --- | --- | --- |",
+    "Synthesize the following independent proposals into a concise recommended approach and a list of open questions.",
+    "Do not include a comparison matrix; one will be appended deterministically from the proposals.",
     "",
     "## Requirement",
     requirement,
@@ -105,7 +236,12 @@ export async function runBrainstormStage(
       return { result: "fail", usage: debate.usage };
     }
 
-    writeFileAtomic(join(artifactsDir, stageConfig.output), debate.report);
+    const report = [
+      debate.report,
+      renderComparisonMatrix(debate.proposals),
+      renderRecommendation(debate.proposals, debate.decisions, debate.openQuestions),
+    ].join("\n\n");
+    writeFileAtomic(join(artifactsDir, stageConfig.output), report);
     registerArtifact(runDir, "brainstorm-report", join("artifacts", stageConfig.output));
     if (debate.openQuestions.length > 0) {
       addOpenQuestions(runDir, debate.openQuestions);
@@ -182,7 +318,25 @@ export async function runBrainstormStage(
   const appendix = finalRound
     .map((r, i) => (r.ok && r.result ? `## Model ${i + 1}\n${r.result.text}` : `## Model ${i + 1}\n(failed: ${r.error})`))
     .join("\n\n");
-  writeFileAtomic(join(artifactsDir, stageConfig.output), `${synthesis.text}\n\n---\n\n# Raw proposals\n\n${appendix}\n`);
+
+  const proposals: RoundProposal[] = [];
+  for (let i = 0; i < finalRound.length; i++) {
+    const r = finalRound[i];
+    if (r.ok && r.result) {
+      const name = stageConfig.models[i];
+      proposals.push(parseIndependentProposal(r.result.text, name, profiles[name].model));
+    }
+  }
+
+  const report = [
+    synthesis.text,
+    "---",
+    "# Raw proposals",
+    appendix,
+    renderComparisonMatrix(proposals),
+    renderRecommendation(proposals),
+  ].join("\n\n");
+  writeFileAtomic(join(artifactsDir, stageConfig.output), report);
 
   appendEvent(runDir, {
     ts: new Date().toISOString(),
