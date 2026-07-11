@@ -10,7 +10,7 @@
         "clamp returns max when value is above max"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "fixCount": 0
     }
   ]
