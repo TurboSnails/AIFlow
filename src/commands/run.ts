@@ -27,11 +27,12 @@ import {
   createWorktree as realCreateWorktree,
   removeWorktree as realRemoveWorktree,
   tryMergeBack,
-  resolveConflict,
+  resolveConflictWithAI,
+  generateMergeGuide,
   type WorktreeContext,
 } from "../worktree/manager";
 import { appendEvent } from "../events/events";
-import type { EngineState } from "../engine/state";
+import { writeStateAtomic, type EngineState } from "../engine/state";
 import type {
   ModelProfile,
   RalphLoopStageConfig,
@@ -252,7 +253,6 @@ export async function runCommand(
             path: worktreeCtx.worktreePath,
           });
           const mergeFn = overrides.tryMergeBack ?? tryMergeBack;
-          const resolveFn = overrides.resolveConflict ?? resolveConflict;
           const conflictFilesFn = overrides.diffConflictFileNames ?? diffConflictFileNames;
           const driftFilesFn = overrides.diffFilesSinceMergeBase ?? diffFilesSinceMergeBase;
           const mergeResult = await mergeFn(worktreeCtx, pipelineAutonomy, projectConfig.max_drift_files);
@@ -274,7 +274,7 @@ export async function runCommand(
               path: worktreeCtx.worktreePath,
             });
             worktreeHandled = true;
-          } else if (mergeResult === "conflict" || mergeResult === "drift") {
+          } else if (mergeResult === "conflict") {
             appendEvent(runDir, {
               ts: new Date().toISOString(),
               type: "worktree",
@@ -282,13 +282,75 @@ export async function runCommand(
               branch: worktreeCtx.branch,
               path: worktreeCtx.worktreePath,
             });
-            const files =
-              mergeResult === "drift"
-                ? await driftFilesFn(worktreeCtx.originalCwd, worktreeCtx.branch)
-                : await conflictFilesFn(worktreeCtx.originalCwd);
-            if (mergeResult === "conflict") {
-              await resolveFn(worktreeCtx);
+            const files = await conflictFilesFn(worktreeCtx.originalCwd);
+            const mainDev =
+              modelsConfig.profiles.mainDev ??
+              modelsConfig.profiles[Object.keys(modelsConfig.profiles)[0]];
+            const resolution = await resolveConflictWithAI(
+              worktreeCtx,
+              mainDev,
+              pipelineAutonomy,
+              runDir,
+              {
+                callLlm: callLlmFn,
+                diffConflictFileNames: conflictFilesFn,
+                maxRetrySteps: pipelineConfig.budget?.max_retry_steps,
+                maxTokenCost: pipelineConfig.budget?.max_token_cost,
+              } as any
+            );
+            if (resolution === "resolved") {
+              appendEvent(runDir, {
+                ts: new Date().toISOString(),
+                type: "worktree",
+                action: "resolved",
+                branch: worktreeCtx.branch,
+                path: worktreeCtx.worktreePath,
+              });
+              const removeWorktree = overrides.removeWorktree ?? realRemoveWorktree;
+              const removed = await removeWorktree(worktreeCtx);
+              appendEvent(runDir, {
+                ts: new Date().toISOString(),
+                type: "worktree",
+                action: removed ? "remove" : "remove_failed",
+                branch: worktreeCtx.branch,
+                path: worktreeCtx.worktreePath,
+              });
+              worktreeHandled = true;
+            } else if (resolution === "aborted") {
+              appendEvent(runDir, {
+                ts: new Date().toISOString(),
+                type: "worktree",
+                action: "conflict",
+                branch: worktreeCtx.branch,
+                path: worktreeCtx.worktreePath,
+              });
+              worktreeHandled = true;
+            } else {
+              generateMergeGuide(worktreeCtx, runDir);
+              result.stages.push({
+                id: "merge-conflict",
+                status: "waiting_human",
+                reason: "merge_conflict_unarbitrable" as any,
+              });
+              writeStateAtomic(runDir, result);
+              appendEvent(runDir, {
+                ts: new Date().toISOString(),
+                type: "merge_conflict_unarbitrable",
+                stage: pipelineConfig.stages[pipelineConfig.stages.length - 1]?.id ?? "run",
+                files,
+              });
+              worktreeHandled = true;
             }
+            // Leave the worktree and branch in place so the user can resolve manually.
+          } else if (mergeResult === "drift") {
+            appendEvent(runDir, {
+              ts: new Date().toISOString(),
+              type: "worktree",
+              action: "conflict",
+              branch: worktreeCtx.branch,
+              path: worktreeCtx.worktreePath,
+            });
+            const files = await driftFilesFn(worktreeCtx.originalCwd, worktreeCtx.branch);
             appendEvent(runDir, {
               ts: new Date().toISOString(),
               type: "merge_conflict_unarbitrable",

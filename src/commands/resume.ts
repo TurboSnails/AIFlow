@@ -49,10 +49,14 @@ export async function runResume(
   }
 
   const profiles: Record<string, ModelProfile> = modelsConfig.profiles;
+  const runCwd = persisted.worktree?.path && existsSync(persisted.worktree.path)
+    ? persisted.worktree.path
+    : cwd;
+
   const state = await runPipelineOnce(
     pipelineConfig,
     profiles,
-    cwd,
+    runCwd,
     runDir,
     deps,
     signal,

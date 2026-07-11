@@ -1,9 +1,21 @@
 import { test, expect, describe } from "bun:test";
 import {
+  mkdtempSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runResume } from "../../src/commands/resume";
+import {
   createWorktree,
   commitStory,
   tryMergeBack,
   resolveConflict,
+  resolveConflictWithAI,
+  generateMergeGuide,
   removeWorktree,
   listStaleWorktrees,
   parsePorcelainWorktrees,
@@ -279,5 +291,159 @@ describe("tryMergeBack git error handling", () => {
     const result = await tryMergeBack(ctx, "gated", 50, deps);
 
     expect(result).toBe("error");
+  });
+});
+
+describe("resume worktree re-entry", () => {
+  test("resume uses worktree path from state.json", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "aiflow-resume-worktree-cwd-"));
+    try {
+      mkdirSync(join(cwd, ".aiflow", "config", "pipelines"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "models.yaml"),
+        "profiles:\n  main-dev:\n    channel: http\n    provider: x\n    model: y\n    base_url: http://localhost\n    api_key_env: API_KEY\n"
+      );
+      writeFileSync(
+        join(cwd, ".aiflow", "config", "pipelines", "test.yaml"),
+        "name: test\nstages:\n  - id: step\n    type: shell\n    command: echo ok\n"
+      );
+
+      const runId = "20260710_120000_test01";
+      const runDir = join(cwd, ".aiflow", "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      const worktreePath = mkdtempSync(join(tmpdir(), "aiflow-resume-worktree-path-"));
+      writeFileSync(
+        join(runDir, "state.json"),
+        JSON.stringify({
+          run_id: runId,
+          pipeline: "test",
+          worktree: { path: worktreePath },
+          stages: [{ id: "step", status: "pending" }],
+          cost: { input_tokens: 0, output_tokens: 0, est_usd: 0 },
+        })
+      );
+
+      let recordedCwd: string | undefined;
+      const result = await runResume(cwd, { runId }, {
+        runners: {
+          shell: async (_stageConfig, _stageState, _profiles, stageCwd) => {
+            recordedCwd = stageCwd;
+            return { result: "pass", usage: { inTok: 0, outTok: 0, costUsd: 0 } };
+          },
+        },
+      });
+
+      expect(result.status).toBe("resumed");
+      expect(recordedCwd).toBe(worktreePath);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveConflictWithAI", () => {
+  test("writes AI-resolved files, stages, commits, and returns resolved", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-resolve-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(join(dir, "src", "a.ts"), "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> branch\n");
+      const recorded: Array<{ cwd: string; args: string[] }> = [];
+      const deps = {
+        runGit: async (cwd: string, args: string[]) => {
+          recorded.push({ cwd, args });
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+        diffConflictFileNames: async () => ["src/a.ts"],
+        callLlm: async () => ({
+          text: JSON.stringify({ files: [{ path: "src/a.ts", content: "resolved" }] }),
+          usage: { inTok: 0, outTok: 0, costUsd: 0 },
+        }),
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "gated", join(dir, "run"), deps);
+      expect(result).toBe("resolved");
+      expect(recorded.some((c) => c.args[0] === "add" && c.args[1] === "src/a.ts")).toBe(true);
+      expect(recorded.some((c) => c.args[0] === "commit" && c.args.includes("aiflow: resolve conflicts via main-dev"))).toBe(true);
+      expect(readFileSync(join(dir, "src", "a.ts"), "utf-8")).toBe("resolved");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns escalated when AI resolution fails for non-full autonomy", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-escalate-"));
+    try {
+      writeFileSync(join(dir, "a.txt"), "conflict");
+      const deps = {
+        runGit: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        diffConflictFileNames: async () => ["a.txt"],
+        callLlm: async () => ({ text: "not json", usage: { inTok: 0, outTok: 0, costUsd: 0 } }),
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "gated", join(dir, "run"), deps);
+      expect(result).toBe("escalated");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns aborted when AI resolution fails for full autonomy", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiflow-conflict-abort-"));
+    try {
+      writeFileSync(join(dir, "a.txt"), "conflict");
+      const deps = {
+        runGit: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        diffConflictFileNames: async () => ["a.txt"],
+        callLlm: async () => {
+          throw new Error("LLM unavailable");
+        },
+      };
+      const ctx = { originalCwd: dir, worktreePath: dir, branch: "aiflow/run", baseCwd: dir };
+      const profile = {
+        channel: "http" as const,
+        provider: "x",
+        model: "y",
+        base_url: "http://localhost",
+        api_key_env: "API_KEY",
+      };
+      const result = await resolveConflictWithAI(ctx, profile, "full", join(dir, "run"), deps);
+      expect(result).toBe("aborted");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("generateMergeGuide", () => {
+  test("writes merge guide with base cwd and branch", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "aiflow-merge-guide-"));
+    try {
+      const ctx = {
+        originalCwd: "/base",
+        worktreePath: "/wt",
+        branch: "aiflow/run",
+        baseCwd: "/base",
+      };
+      generateMergeGuide(ctx, runDir);
+      const content = readFileSync(join(runDir, "artifacts", "merge-guide.md"), "utf-8");
+      expect(content).toContain("cd /base");
+      expect(content).toContain("git merge aiflow/run");
+    } finally {
+      rmSync(runDir, { recursive: true, force: true });
+    }
   });
 });

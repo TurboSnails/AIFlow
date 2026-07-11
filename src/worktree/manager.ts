@@ -1,6 +1,9 @@
 import { $ } from "bun";
-import { statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { callLlm } from "../llm/client";
+import type { ModelProfile } from "../config/schema";
+import { diffConflictFileNames as realDiffConflictFileNames } from "../git";
 
 export interface GitResult {
   exitCode: number;
@@ -12,6 +15,8 @@ export interface WorktreeContext {
   originalCwd: string;
   worktreePath: string;
   branch: string;
+  worktreeCwd?: string;
+  baseCwd?: string;
 }
 
 export interface WorktreeEntry {
@@ -24,6 +29,13 @@ export interface WorktreeManagerDeps {
   listWorktrees: (cwd: string) => Promise<WorktreeEntry[]>;
   now: () => number;
   statMtime: (path: string) => number | undefined;
+}
+
+export interface ResolveConflictDeps extends WorktreeManagerDeps {
+  callLlm: typeof callLlm;
+  diffConflictFileNames: (cwd: string) => Promise<string[]>;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 const defaultRunGit = async (cwd: string, args: string[]): Promise<GitResult> => {
@@ -72,6 +84,12 @@ const defaultDeps: WorktreeManagerDeps = {
   statMtime: defaultStatMtime,
 };
 
+const defaultResolveDeps: ResolveConflictDeps = {
+  ...defaultDeps,
+  callLlm,
+  diffConflictFileNames: realDiffConflictFileNames,
+};
+
 export async function createWorktree(
   cwd: string,
   runId: string,
@@ -84,7 +102,7 @@ export async function createWorktree(
   if (result.exitCode !== 0) {
     throw new Error(`git worktree add failed: ${result.stdout} ${result.stderr}`);
   }
-  return { originalCwd: cwd, worktreePath, branch };
+  return { originalCwd: cwd, worktreePath, branch, worktreeCwd: worktreePath, baseCwd: cwd };
 }
 
 export async function commitStory(
@@ -138,6 +156,54 @@ export async function resolveConflict(
 ): Promise<"aborted" | "failed"> {
   const { exitCode } = await deps.runGit(ctx.originalCwd, ["merge", "--abort"]);
   return exitCode === 0 ? "aborted" : "failed";
+}
+
+export async function resolveConflictWithAI(
+  ctx: WorktreeContext,
+  mainDevProfile: ModelProfile,
+  autonomy: string,
+  runDir: string,
+  deps: Partial<ResolveConflictDeps> = defaultResolveDeps as any
+): Promise<"resolved" | "aborted" | "escalated"> {
+  const d = { ...defaultResolveDeps, ...deps };
+  const baseCwd = ctx.baseCwd ?? ctx.originalCwd;
+  try {
+    const conflictFiles = await d.diffConflictFileNames(baseCwd);
+    const prompt = `Resolve these git conflicts. Return the resolved content for each file as JSON: { "files": [{ "path": "...", "content": "..." }] }.\n${conflictFiles.map((f) => readFileSync(join(baseCwd, f), "utf-8")).join("\n---\n")}`;
+    const result = await d.callLlm({
+      profile: mainDevProfile,
+      prompt,
+      jsonMode: true,
+      maxRetrySteps: d.maxRetrySteps,
+      maxTokenCost: d.maxTokenCost,
+    });
+    const data = JSON.parse(result.text) as { files: Array<{ path: string; content: string }> };
+    if (!Array.isArray(data.files)) {
+      throw new Error("AI conflict resolution response missing files array");
+    }
+    for (const f of data.files) {
+      if (typeof f.path !== "string" || typeof f.content !== "string") {
+        throw new Error("AI conflict resolution file entry missing path or content");
+      }
+    }
+    for (const f of data.files) {
+      writeFileSync(join(baseCwd, f.path), f.content);
+      await d.runGit(baseCwd, ["add", f.path]);
+    }
+    await d.runGit(baseCwd, ["commit", "-m", "aiflow: resolve conflicts via main-dev"]);
+    return "resolved";
+  } catch {
+    await d.runGit(baseCwd, ["merge", "--abort"]);
+    return autonomy === "full" ? "aborted" : "escalated";
+  }
+}
+
+export function generateMergeGuide(ctx: WorktreeContext, runDir: string): void {
+  const baseCwd = ctx.baseCwd ?? ctx.originalCwd;
+  const guide = `Run the following to merge the AIFlow branch manually:\n\n` + `cd ${baseCwd}\n` + `git merge ${ctx.branch}\n`;
+  const artifactsDir = join(runDir, "artifacts");
+  mkdirSync(artifactsDir, { recursive: true });
+  writeFileSync(join(artifactsDir, "merge-guide.md"), guide);
 }
 
 export async function removeWorktree(
