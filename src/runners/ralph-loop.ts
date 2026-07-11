@@ -59,6 +59,22 @@ const defaultDeps: RalphLoopDeps = {
   maxDriftFiles: 50,
 };
 
+export function assertTamperGuard(cwd: string, runDir: string): void {
+  const board = realReadSpecBoard(runDir);
+  if (board.spec_hash) {
+    const currentSpecHash = realHashSpecFile(join(cwd, "spec.md"));
+    if (currentSpecHash !== board.spec_hash) {
+      throw new Error(`Spec hash mismatch: spec.md was modified after the spec stage.`);
+    }
+  }
+  if (board.config_hash) {
+    const currentConfigHash = realHashConfigDir(cwd);
+    if (currentConfigHash !== board.config_hash) {
+      throw new Error(`Config hash mismatch: .aiflow/config was modified after run start.`);
+    }
+  }
+}
+
 export function renderPrompt(story: Story, specExcerpt: string, progressTail: string, fixListContent: string): string {
   return [
     "You are implementing one story in an existing codebase.",
@@ -435,6 +451,7 @@ export async function runRalphLoop(
   const prdPath = join(cwd, "prd.json");
 
   while (true) {
+    assertTamperGuard(cwd, runDir);
     const prd = readPrd(prdPath);
 
     if (signal?.aborted) {

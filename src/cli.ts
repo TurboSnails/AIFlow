@@ -1,13 +1,43 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import type { RunLock } from "./lock";
+import type { RunLock, AcquireLockOptions } from "./lock";
 
 const program = new Command();
 program.name("aiflow").description("AIFlow pipeline orchestrator CLI").version("0.1.0");
 
+/** Standard lock callbacks for CLI messaging (waiting/stale). */
+const cliLockCallbacks: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed"> = {
+  onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
+  onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+};
+
+/** Set up SIGINT→AbortController, run fn, and handle LockWaitAbortedError.
+ *  Used for commands that acquire their own run lock internally (run/resume/approve).
+ *  Returns `undefined` if the user aborted while waiting (sets exitCode to 1). */
+async function withSigintAbort<T>(
+  fn: (signal: AbortSignal) => T | Promise<T>,
+): Promise<T | undefined> {
+  const { LockWaitAbortedError } = await import("./lock");
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+  try {
+    return await fn(controller.signal);
+  } catch (err) {
+    if (err instanceof LockWaitAbortedError) {
+      process.exitCode = 1;
+      return undefined;
+    }
+    throw err;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
 /** Acquire the run lock with the standard CLI messaging/SIGINT handling, run the
  *  provided callback while holding the lock, and release the lock afterwards.
- *  Returns `undefined` if the user aborted while waiting (sets exitCode to 1). */
+ *  Returns `undefined` if the user aborted while waiting (sets exitCode to 1).
+ *  Used for commands that do NOT acquire their own lock internally (reject/abort). */
 async function withRunLock<T>(
   cwd: string,
   runId: string,
@@ -21,8 +51,7 @@ async function withRunLock<T>(
   try {
     lock = await acquireRunLock(cwd, runId, {
       signal: controller.signal,
-      onWaiting: (info) => console.error(`Waiting: run ${info.run_id} in progress (pid ${info.pid}), queued...`),
-      onStaleReclaimed: (info) => console.error(`Reclaimed stale lock left by pid ${info.pid} (process no longer running).`),
+      ...cliLockCallbacks,
     });
   } catch (err) {
     process.removeListener("SIGINT", onSigint);
@@ -94,14 +123,14 @@ program
     const { runCommand } = await import("./commands/run");
     const { summarizePipelineOutcome, createRunId } = await import("./engine/engine");
     const runId = createRunId();
-    const done = await withRunLock(process.cwd(), runId, async (lock, controller) => {
+    const done = await withSigintAbort(async (signal) => {
       try {
         const state = await runCommand(
           process.cwd(),
           opts.pipeline,
-          {},
+          { lockOptions: cliLockCallbacks },
           { requirement: opts.requirement, requirementFile: opts.requirementFile },
-          controller.signal,
+          signal,
           runId
         );
         const outcome = summarizePipelineOutcome(state);
@@ -133,12 +162,12 @@ program
     const { runResume } = await import("./commands/resume");
     const { summarizePipelineOutcome } = await import("./engine/engine");
     const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
-    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-resume", async (lock, controller) => {
+    const done = await withSigintAbort(async (signal) => {
       const result = await runResume(
         process.cwd(),
-        { runId: opts.runId, pipeline: opts.pipeline, force: opts.force, raiseBudget: opts.raiseBudget },
+        { runId: opts.runId, pipeline: opts.pipeline, force: opts.force, raiseBudget: opts.raiseBudget, lockOptions: cliLockCallbacks },
         undefined,
-        controller.signal
+        signal
       );
       if (result.status === "no_runs" || result.status === "missing_run_dir") {
         console.error(result.message ?? "");
@@ -163,8 +192,8 @@ program
     const { runApprove } = await import("./commands/approve");
     const { summarizePipelineOutcome } = await import("./engine/engine");
     const { formatBudgetOutcomeLine } = await import("./commands/budget-outcome");
-    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-approve", async (lock, controller) => {
-      const result = await runApprove(process.cwd(), opts, undefined, controller.signal);
+    const done = await withSigintAbort(async (signal) => {
+      const result = await runApprove(process.cwd(), { ...opts, lockOptions: cliLockCallbacks }, undefined, signal);
       if (result.status !== "resumed") {
         console.error(result.message ?? result.status);
         process.exitCode = 1;

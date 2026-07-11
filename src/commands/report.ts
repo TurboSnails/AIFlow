@@ -6,6 +6,13 @@ import { readEvents } from "../events/events";
 import { listRunIdsByMtimeDesc } from "../runs/store";
 import { writeFileAtomic } from "../atomic/atomic-write";
 
+export function sanitizeSecrets(text: string): string {
+  return text
+    .replace(/\b(sk-[a-zA-Z0-9]{20,})\b/g, "***")
+    .replace(/\b(ANTHROPIC_API_KEY|OPENAI_API_KEY|OPEN_CODE_API_KEY)\s*=\s*[^\s]+/g, "$1=***")
+    .replace(/"api_key"\s*:\s*"[^"]+"/g, '"api_key":"***"');
+}
+
 export interface RunReportOptions {
   now: Date;
   startedAt: Date;
@@ -163,7 +170,7 @@ export function renderRunReport(state: EngineState, events: AiflowEvent[], opts:
 }
 
 export function writeRunReport(runDir: string, state: EngineState, events: AiflowEvent[], opts: RunReportOptions): string {
-  const content = renderRunReport(state, events, opts);
+  const content = sanitizeSecrets(renderRunReport(state, events, opts));
   writeFileAtomic(join(runDir, "run-report.md"), content);
   return content;
 }

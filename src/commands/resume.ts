@@ -7,6 +7,7 @@ import { isTerminalStatus, runPipelineOnce, type EngineDeps } from "../engine/en
 import type { EngineState } from "../engine/state";
 import { writeStateAtomic } from "../engine/state";
 import { assertCleanIfAutoClean } from "./dirty-guard";
+import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
 
 export interface ResumeResult {
   status: "resumed" | "noop_terminal" | "no_runs" | "missing_run_dir";
@@ -17,7 +18,7 @@ export interface ResumeResult {
 
 export async function runResume(
   cwd: string,
-  opts: { runId?: string; pipeline?: string; force?: boolean; raiseBudget?: number },
+  opts: { runId?: string; pipeline?: string; force?: boolean; raiseBudget?: number; lockOptions?: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed"> },
   deps?: EngineDeps,
   signal?: AbortSignal,
   isCleanFn?: (cwd: string) => Promise<boolean>
@@ -29,6 +30,16 @@ export async function runResume(
   if (!existsSync(statePath)) {
     return { status: "missing_run_dir", runId, message: `Run directory ${runDir} exists but has no state.json` };
   }
+
+  let lock = { release: () => {} };
+  let ownLock = false;
+  try {
+    lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
+    ownLock = true;
+  } catch (err) {
+    if (!(err instanceof LockWaitAbortedError)) throw err;
+  }
+  try {
   const persisted = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const pipelineName = opts.pipeline ?? persisted.pipeline;
   const wasTerminal = persisted.stages.every((s) => isTerminalStatus(s.status));
@@ -65,4 +76,7 @@ export async function runResume(
 
   if (wasTerminal && !opts.force) return { status: "noop_terminal", state, runId };
   return { status: "resumed", state, runId };
+  } finally {
+    if (ownLock) lock.release();
+  }
 }

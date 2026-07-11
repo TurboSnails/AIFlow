@@ -3,6 +3,7 @@ import { symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
+import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
 import { writeFileAtomic } from "../atomic/atomic-write";
 import { createRunId, runPipelineOnce, resolvePipelineDefaults, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
@@ -65,6 +66,8 @@ export interface RunCommandOverrides {
   resolveConflict?: (ctx: WorktreeContext) => Promise<"aborted" | "failed">;
   diffConflictFileNames?: (cwd: string) => Promise<string[]>;
   diffFilesSinceMergeBase?: (cwd: string, branch: string) => Promise<string[]>;
+  /** Optional lock callbacks forwarded to acquireRunLock (e.g. onWaiting, onStaleReclaimed for CLI messaging). */
+  lockOptions?: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed">;
 }
 
 export interface RequirementInput {
@@ -116,6 +119,17 @@ export async function runCommand(
   await assertCleanIfAutoClean(cwd, pipelineConfig, pipelineName);
 
   const effectiveRunId = runId ?? createRunId();
+  let lock = { release: () => {} };
+  let ownLock = false;
+  try {
+    lock = await acquireRunLock(cwd, effectiveRunId, { signal, ...(overrides.lockOptions ?? {}) });
+    ownLock = true;
+  } catch (err) {
+    if (!(err instanceof LockWaitAbortedError)) throw err;
+    // Signal was already aborted before the lock could be acquired.
+    // The engine will return a paused state immediately — proceed without holding the lock.
+  }
+  try {
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
   mkdirSync(runDir, { recursive: true });
 
@@ -389,5 +403,8 @@ export async function runCommand(
         path: worktreeCtx.worktreePath,
       });
     }
+  }
+  } finally {
+    if (ownLock) lock.release();
   }
 }

@@ -12,6 +12,7 @@ import { callLlm, type LlmCallResult } from "../llm/client";
 import { resolveOpenQuestions, readSpecBoard } from "../specboard/specboard";
 import type { SpecBoard } from "../specboard/types";
 import type { ModelProfile, ProjectConfig, BudgetConfig } from "../config/schema";
+import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
 
 
 export interface ApproveResult {
@@ -82,7 +83,7 @@ function selectMainDevProfile(profiles: Record<string, ModelProfile>): ModelProf
 
 export async function runApprove(
   cwd: string,
-  opts: { runId?: string; stage?: string },
+  opts: { runId?: string; stage?: string; lockOptions?: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed"> },
   deps?: EngineDeps & { callLlm?: typeof callLlm },
   signal?: AbortSignal,
   isCleanFn?: (cwd: string) => Promise<boolean>
@@ -95,6 +96,15 @@ export async function runApprove(
     return { status: "missing_run_dir", runId, message: `Run directory ${runDir} exists but has no state.json` };
   }
 
+  let lock = { release: () => {} };
+  let ownLock = false;
+  try {
+    lock = await acquireRunLock(cwd, runId, { signal, ...(opts.lockOptions ?? {}) });
+    ownLock = true;
+  } catch (err) {
+    if (!(err instanceof LockWaitAbortedError)) throw err;
+  }
+  try {
   let state = JSON.parse(readFileSync(statePath, "utf-8")) as EngineState;
   const waitingStages = state.stages.filter((s) => s.status === "waiting_human");
 
@@ -198,4 +208,7 @@ export async function runApprove(
   const resultState = await runPipelineOnce(pipelineConfig, modelsConfig.profiles, cwd, runDir, deps, signal, { resume: true });
 
   return { status: "resumed", state: resultState, runId };
+  } finally {
+    if (ownLock) lock.release();
+  }
 }
