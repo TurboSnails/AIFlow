@@ -102,6 +102,7 @@ export const PlanStageSchema = z.object({
   model: z.string(),
   input: z.string().default("spec.md"),
   output: z.string().default("prd.json"),
+  max_retry_steps: z.number().int().positive().optional(),
 });
 export type PlanStageConfig = z.infer<typeof PlanStageSchema>;
 

@@ -35,7 +35,13 @@ const defaultDeps: SpecDeps = {
 };
 
 function renderSpecPrompt(input: string, output: string): string {
-  return `Produce a spec in OpenSpec format: YAML frontmatter followed by Markdown body and <task id="..." priority="1" files="..."> blocks. Each task must have a checklist of acceptance criteria.`;
+  return [
+    `Produce a spec in OpenSpec format: YAML frontmatter followed by Markdown body and <task id="..." priority="1" files="..."> blocks. Each task must have a checklist of acceptance criteria.`,
+    `Write the file directly to the project root as ${output}. Do not ask for confirmation.`,
+    "",
+    "## Input",
+    input,
+  ].join("\n");
 }
 
 export async function runSpecStage(

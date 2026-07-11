@@ -75,12 +75,15 @@ test("missing spec.md returns stage fail", async () => {
   }
 });
 
-test("invalid JSON on both attempts throws", async () => {
+test("invalid JSON on all attempts returns stage fail", async () => {
   const { cwd, runDir } = makeDirs();
   try {
     writeFileSync(join(cwd, "spec.md"), "some spec");
     const callLlm = mock(async () => ({ text: "not json", usage: { inTok: 1, outTok: 1, costUsd: 0 } }));
-    await expect(runPlanStage(stageConfig, stageState, profiles, cwd, runDir, () => new Date(), undefined, { ...defaultDeps, callLlm })).rejects.toThrow();
+    const config: PlanStageConfig = { ...stageConfig, max_retry_steps: 1 };
+    const result = await runPlanStage(config, stageState, profiles, cwd, runDir, () => new Date(), undefined, { ...defaultDeps, callLlm });
+    expect(result.result).toBe('fail');
+    expect(result.usage).toEqual({ inTok: 2, outTok: 2, costUsd: 0 });
     expect(callLlm).toHaveBeenCalledTimes(2);
   } finally {
     cleanup(cwd, runDir);
