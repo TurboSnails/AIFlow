@@ -10,6 +10,7 @@ export interface CleanOptions {
   before?: string;
   status?: string;
   keep?: number;
+  runs?: boolean;
   dryRun?: boolean;
   yes?: boolean;
   write?: (s: string) => void;
@@ -79,9 +80,9 @@ export function runClean(cwd: string, opts: CleanOptions): number {
       return 1;
     }
   }
-  // Require at least one filter
-  if (opts.before === undefined && opts.status === undefined && opts.keep === undefined) {
-    writeErr("clean requires at least one of --before, --status, --keep\n");
+  // Require at least one filter (--runs alone means clean all terminal runs)
+  if (!opts.runs && opts.before === undefined && opts.status === undefined && opts.keep === undefined) {
+    writeErr("clean requires at least one of --runs, --before, --status, --keep\n");
     return 1;
   }
 

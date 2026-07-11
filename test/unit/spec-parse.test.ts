@@ -45,3 +45,10 @@ test("parseOpenSpec returns empty acceptance when no checklist", () => {
   const parsed = parseOpenSpec(md);
   expect(parsed.tasks[0].acceptance).toEqual([]);
 });
+
+test("parseOpenSpec filters empty strings when depends=\"\" or files=\"\"", () => {
+  const md = `---\nspec_id: u\n---\n<task id="T1" priority="1" depends="" files="">\n- [ ] check\n</task>`;
+  const parsed = parseOpenSpec(md);
+  expect(parsed.tasks[0].depends).toEqual([]);
+  expect(parsed.tasks[0].files).toEqual([]);
+});

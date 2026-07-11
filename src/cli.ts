@@ -235,8 +235,8 @@ program
   .option("--run-id <id>", "target a specific run (defaults to latest)")
   .action(async (opts: { runId?: string }) => {
     const { runAbort } = await import("./commands/abort");
-    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-abort", () => {
-      const result = runAbort(process.cwd(), opts);
+    const done = await withRunLock(process.cwd(), opts.runId ?? "pending-abort", async () => {
+      const result = await runAbort(process.cwd(), opts);
       if (result.status !== "aborted") {
         console.error(result.status === "no_runs" ? "No runs found" : "Could not abort run");
         process.exitCode = 1;
@@ -305,8 +305,9 @@ program
   .option("--keep <n>", "keep the newest N matching runs", (v) => Number(v))
   .option("--dry-run", "show what would be deleted without deleting", false)
   .option("--yes", "skip the confirmation prompt", false)
+  .option("--runs", "delete all terminal runs (done|failed|aborted); combine with --before/--status/--keep to narrow scope", false)
   .option("--worktrees", "remove stale aiflow worktrees", false)
-  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; worktrees: boolean }) => {
+  .action(async (opts: { before?: string; status?: string; keep?: number; dryRun: boolean; yes: boolean; runs: boolean; worktrees: boolean }) => {
     const { runClean, cleanWorktrees } = await import("./commands/clean");
     let code = 0;
     if (opts.worktrees) {
@@ -316,7 +317,7 @@ program
         return;
       }
     }
-    if (opts.before || opts.status || opts.keep) {
+    if (opts.runs || opts.before || opts.status || opts.keep !== undefined) {
       const confirm = process.stdin.isTTY
         ? () => {
             const answer = prompt("Delete these runs? (y/N)");
@@ -324,6 +325,7 @@ program
           }
         : undefined;
       const runCode = runClean(process.cwd(), {
+        runs: opts.runs,
         before: opts.before,
         status: opts.status,
         keep: opts.keep,
@@ -333,8 +335,8 @@ program
       });
       if (runCode !== 0) code = runCode;
     }
-    if (!opts.worktrees && !opts.before && !opts.status && !opts.keep) {
-      process.stderr.write("clean requires at least one of --before, --status, --keep, --worktrees\n");
+    if (!opts.worktrees && !opts.runs && !opts.before && !opts.status && opts.keep === undefined) {
+      process.stderr.write("clean requires at least one of --runs, --before, --status, --keep, --worktrees\n");
       code = 1;
     }
     process.exitCode = code;

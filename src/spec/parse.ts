@@ -30,8 +30,8 @@ export function parseOpenSpec(md: string): OpenSpec {
     tasks.push({
       id: attrs.id,
       priority: Number(attrs.priority ?? 1),
-      files: attrs.files?.split(",").map((s) => s.trim()),
-      depends: attrs.depends?.split(",").map((s) => s.trim()),
+      files: attrs.files?.split(",").map((s) => s.trim()).filter(Boolean),
+      depends: attrs.depends?.split(",").map((s) => s.trim()).filter(Boolean),
       acceptance,
       body: rawBody,
     });

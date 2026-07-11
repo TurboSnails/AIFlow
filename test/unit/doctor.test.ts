@@ -1,6 +1,65 @@
 import { test, expect, mock } from "bun:test";
-import { runDoctorChecks } from "../../src/commands/doctor";
+import { runDoctorChecks, runDoctor } from "../../src/commands/doctor";
 import type { ModelProfile, ProjectConfig } from "../../src/config/schema";
+
+// --- runDoctor tests ---
+
+test("runDoctor: opencode --version exitCode 0 → opencode_cli ok:true", async () => {
+  const results = await runDoctor("/tmp/cwd", {
+    runOpenCode: async () => ({ exitCode: 0 }),
+    loadModelsConfig: () => ({ profiles: {} }),
+    runGitStatus: async () => ({ exitCode: 0 }),
+  });
+  const check = results.find((r) => r.check === "opencode_cli");
+  expect(check).toBeDefined();
+  expect(check!.ok).toBe(true);
+});
+
+test("runDoctor: opencode --version throws → opencode_cli ok:false", async () => {
+  const results = await runDoctor("/tmp/cwd", {
+    runOpenCode: async () => { throw new Error("command not found"); },
+    loadModelsConfig: () => ({ profiles: {} }),
+    runGitStatus: async () => ({ exitCode: 0 }),
+  });
+  const check = results.find((r) => r.check === "opencode_cli");
+  expect(check).toBeDefined();
+  expect(check!.ok).toBe(false);
+});
+
+test("runDoctor: models.yaml parse succeeds → models_config ok:true", async () => {
+  const results = await runDoctor("/tmp/cwd", {
+    runOpenCode: async () => ({ exitCode: 0 }),
+    loadModelsConfig: () => ({ profiles: {} }),
+    runGitStatus: async () => ({ exitCode: 0 }),
+  });
+  const check = results.find((r) => r.check === "models_config");
+  expect(check).toBeDefined();
+  expect(check!.ok).toBe(true);
+});
+
+test("runDoctor: models.yaml parse throws → models_config ok:false", async () => {
+  const results = await runDoctor("/tmp/cwd", {
+    runOpenCode: async () => ({ exitCode: 0 }),
+    loadModelsConfig: () => { throw new Error("YAML parse error"); },
+    runGitStatus: async () => ({ exitCode: 0 }),
+  });
+  const check = results.find((r) => r.check === "models_config");
+  expect(check).toBeDefined();
+  expect(check!.ok).toBe(false);
+});
+
+test("runDoctor: git status non-zero exitCode → git ok:false", async () => {
+  const results = await runDoctor("/tmp/cwd", {
+    runOpenCode: async () => ({ exitCode: 0 }),
+    loadModelsConfig: () => ({ profiles: {} }),
+    runGitStatus: async () => ({ exitCode: 128 }),
+  });
+  const check = results.find((r) => r.check === "git");
+  expect(check).toBeDefined();
+  expect(check!.ok).toBe(false);
+});
+
+// --- runDoctorChecks tests ---
 
 const reviewerProfile: ModelProfile = {
   channel: "http",

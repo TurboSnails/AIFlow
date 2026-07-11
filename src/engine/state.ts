@@ -4,7 +4,7 @@ import { join } from "node:path";
 export type StageStatus = "pending" | "running" | "done" | "failed" | "aborted" | "suspended" | "waiting_human" | "paused";
 
 export type RalphLoopStopReason = "max_iterations" | "stall" | "stories_suspended" | "budget_exceeded";
-export type StageStopReason = RalphLoopStopReason | "human_gate_timeout" | "human_gate_rejected" | "autonomy_pause" | "merge_conflict_unarbitrable";
+export type StageStopReason = RalphLoopStopReason | "human_gate_timeout" | "human_gate_rejected" | "autonomy_pause" | "merge_conflict_unarbitrable" | "aborted";
 
 export interface StageState {
   id: string;

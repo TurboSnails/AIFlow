@@ -12,11 +12,30 @@ export interface Diagnosis {
   message: string;
 }
 
-export async function runDoctor(cwd: string): Promise<Diagnosis[]> {
+export interface RunDoctorDeps {
+  runOpenCode: (cwd: string) => Promise<{ exitCode: number }>;
+  loadModelsConfig: (path: string) => unknown;
+  runGitStatus: (cwd: string) => Promise<{ exitCode: number }>;
+}
+
+const defaultRunDoctorDeps: RunDoctorDeps = {
+  runOpenCode: async (cwd: string) => {
+    const result = await $`opencode --version`.cwd(cwd).nothrow().quiet();
+    return { exitCode: result.exitCode };
+  },
+  loadModelsConfig: realLoadModelsConfig,
+  runGitStatus: async (cwd: string) => {
+    const result = await $`git status`.cwd(cwd).nothrow().quiet();
+    return { exitCode: result.exitCode };
+  },
+};
+
+export async function runDoctor(cwd: string, deps: Partial<RunDoctorDeps> = {}): Promise<Diagnosis[]> {
+  const d: RunDoctorDeps = { ...defaultRunDoctorDeps, ...deps };
   const results: Diagnosis[] = [];
   // OpenCode CLI
   try {
-    const { exitCode } = await $`opencode --version`.cwd(cwd).nothrow().quiet();
+    const { exitCode } = await d.runOpenCode(cwd);
     results.push({ check: "opencode_cli", ok: exitCode === 0, message: exitCode === 0 ? "ok" : "opencode not found" });
   } catch {
     results.push({ check: "opencode_cli", ok: false, message: "opencode --version failed" });
@@ -24,14 +43,14 @@ export async function runDoctor(cwd: string): Promise<Diagnosis[]> {
   // 模型 profile 连通性（至少能解析配置）
   const modelsPath = join(cwd, ".aiflow", "config", "models.yaml");
   try {
-    realLoadModelsConfig(modelsPath);
+    d.loadModelsConfig(modelsPath);
     results.push({ check: "models_config", ok: true, message: "models.yaml parsed" });
   } catch (e) {
     results.push({ check: "models_config", ok: false, message: String(e) });
   }
   // git
   try {
-    const { exitCode } = await $`git status`.cwd(cwd).nothrow().quiet();
+    const { exitCode } = await d.runGitStatus(cwd);
     results.push({ check: "git", ok: exitCode === 0, message: exitCode === 0 ? "ok" : "not a git repo" });
   } catch {
     results.push({ check: "git", ok: false, message: "git status failed" });
