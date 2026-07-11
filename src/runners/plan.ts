@@ -1,28 +1,24 @@
 import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
-import { writeFileAtomic } from "../atomic/atomic-write";
-import { parseOpenSpec } from "../openspec/parser";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { callLlm } from "../llm/client";
 import { PrdSchema } from "../prd";
-import { registerArtifact } from "../specboard/specboard";
-import { appendEvent } from "../events/events";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
 import type { PlanStageConfig, ModelProfile } from "../config/schema";
 import type { StageOutcome } from "../engine/engine";
 import type { StageState } from "../engine/state";
 
 export interface PlanDeps {
-  parseOpenSpec: typeof parseOpenSpec;
-  registerArtifact: typeof registerArtifact;
+  callLlm?: typeof callLlm;
 }
 
-const defaultDeps: PlanDeps = { parseOpenSpec, registerArtifact };
+export const defaultDeps: PlanDeps = { callLlm };
 
 const zeroUsage = { inTok: 0, outTok: 0, costUsd: 0 };
 
 export async function runPlanStage(
   stageConfig: PlanStageConfig,
   _stageState: StageState,
-  _profiles: Record<string, ModelProfile>,
+  profiles: Record<string, ModelProfile>,
   cwd: string,
   runDir: string,
   _nowFn: () => Date,
@@ -30,39 +26,28 @@ export async function runPlanStage(
   deps: PlanDeps = defaultDeps,
   _budget: BudgetTracker = noopBudgetTracker
 ): Promise<StageOutcome> {
+  const profile = profiles[stageConfig.model];
+  if (!profile) throw new Error(`Unknown model ${stageConfig.model}`);
   const specPath = join(cwd, stageConfig.input);
   if (!existsSync(specPath)) {
-    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
     return { result: "fail", usage: zeroUsage };
   }
-
-  const specText = readFileSync(specPath, "utf-8");
-  const parsed = deps.parseOpenSpec(specText);
-  if (!parsed.success) {
-    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
-    return { result: "fail", usage: zeroUsage };
+  const spec = readFileSync(specPath, "utf-8");
+  const prompt = `Convert the following spec into a JSON prd matching this schema: ${JSON.stringify(PrdSchema.shape)}.\n\n${spec}`;
+  const result = await (deps.callLlm ?? callLlm)({ profile, prompt, jsonMode: true });
+  let data: unknown;
+  try {
+    data = JSON.parse(result.text);
+    PrdSchema.parse(data);
+  } catch (err) {
+    const retry = await (deps.callLlm ?? callLlm)({
+      profile,
+      prompt: `${prompt}\n\nPrevious attempt failed with: ${err}. Please fix and return valid JSON only.`,
+      jsonMode: true,
+    });
+    data = JSON.parse(retry.text);
+    PrdSchema.parse(data);
   }
-
-  const prd = {
-    branchName: parsed.spec.meta.branch,
-    stories: parsed.spec.tasks.map((task) => ({
-      id: task.id,
-      title: task.title,
-      acceptance: task.acceptance,
-      priority: task.priority,
-      passes: false,
-      fixCount: 0,
-    })),
-  };
-
-  const validated = PrdSchema.safeParse(prd);
-  if (!validated.success) {
-    appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "fail" });
-    return { result: "fail", usage: zeroUsage };
-  }
-
-  writeFileAtomic(join(cwd, stageConfig.output), JSON.stringify(validated.data, null, 2));
-  deps.registerArtifact(runDir, "prd", stageConfig.output);
-  appendEvent(runDir, { ts: new Date().toISOString(), type: "plan_result", stage: stageConfig.id, result: "pass" });
-  return { result: "pass", usage: zeroUsage };
+  writeFileSync(join(cwd, stageConfig.output), JSON.stringify(data, null, 2));
+  return { result: "pass" };
 }

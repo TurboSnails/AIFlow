@@ -9,6 +9,8 @@ import {
   addOpenQuestions,
   resolveOpenQuestions,
   recordReviewMatrix,
+  setSpecHash,
+  setConfigHash,
 } from "../../src/specboard/specboard";
 import type { SpecBoard, ReviewVerdictEntry } from "../../src/specboard/types";
 
@@ -172,6 +174,28 @@ test("all writes use atomic writer and leave no temp file behind", () => {
     expect(existsSync(join(runDir, "specboard.json"))).toBe(true);
     expect(existsSync(join(runDir, "specboard.json.tmp"))).toBe(false);
     expect(readdirSync(runDir)).toEqual(["specboard.json"]);
+  } finally {
+    cleanup(runDir);
+  }
+});
+
+test("setSpecHash persists hash to board", () => {
+  const runDir = makeRunDir();
+  try {
+    setSpecHash(runDir, "abc123");
+    const board = readSpecBoard(runDir);
+    expect(board.spec_hash).toBe("abc123");
+  } finally {
+    cleanup(runDir);
+  }
+});
+
+test("setConfigHash persists hash to board", () => {
+  const runDir = makeRunDir();
+  try {
+    setConfigHash(runDir, "def456");
+    const board = readSpecBoard(runDir);
+    expect(board.config_hash).toBe("def456");
   } finally {
     cleanup(runDir);
   }

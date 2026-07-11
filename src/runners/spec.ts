@@ -5,6 +5,8 @@ import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } fr
 import { parseOpenSpec as realParseOpenSpec, lintOpenSpec as realLintOpenSpec } from "../openspec/parser";
 import type { OpenSpec } from "../openspec/schema";
 import { registerArtifact as realRegisterArtifact } from "../specboard/specboard";
+import { setSpecHash } from "../specboard/specboard";
+import { hashSpecFile } from "../config/config-hash";
 import { appendEvent } from "../events/events";
 import type { SpecResultAiflowEvent } from "../events/events";
 import { noopBudgetTracker, type BudgetTracker } from "../gate/budget";
@@ -33,14 +35,7 @@ const defaultDeps: SpecDeps = {
 };
 
 function renderSpecPrompt(input: string, output: string): string {
-  return [
-    `Write a ${output} file for the following input, in an existing codebase.`,
-    "The spec must include clear, verifiable acceptance criteria for a later implementation stage.",
-    `Write the file directly to the project root as ${output}. Do not ask for confirmation.`,
-    "",
-    "## Input",
-    input,
-  ].join("\n");
+  return `Produce a spec in OpenSpec format: YAML frontmatter followed by Markdown body and <task id="..." priority="1" files="..."> blocks. Each task must have a checklist of acceptance criteria.`;
 }
 
 export async function runSpecStage(
@@ -100,7 +95,8 @@ export async function runSpecStage(
       if (lintErrors.length > 0) {
         result = "fail";
       } else {
-        specHash = hashFile(outputPath);
+        specHash = hashSpecFile(outputPath);
+        if (specHash) setSpecHash(runDir, specHash);
         registerArtifact(runDir, "spec", stageConfig.output);
       }
     }

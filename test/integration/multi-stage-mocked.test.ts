@@ -56,7 +56,7 @@ async function setupProject(): Promise<string> {
 }
 
 const fakeCallLlm = async (opts: { prompt: string }) => ({
-  text: opts.prompt.includes("JSON object")
+  text: opts.prompt.includes("Convert the following spec")
     ? JSON.stringify({ branchName: "feat/x", stories: [{ id: "US-1", title: "t", acceptance: ["a"], priority: 1, passes: false, fixCount: 0 }] })
     : "a synthesized brainstorm result",
   usage: { inTok: 1, outTok: 1, costUsd: 0 },
@@ -105,6 +105,8 @@ test("full pipeline pauses at human_gate, then approve resumes and runs the rema
     const approveResult = await runApprove(dir, { runId }, {
       runners: {
         ralph_loop: async () => ({ result: "pass" }),
+        plan: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
+          runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { callLlm: fakeCallLlm }, budget),
       },
     });
     expect(approveResult.status).toBe("resumed");

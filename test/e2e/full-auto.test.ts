@@ -25,7 +25,7 @@ async function setupProject(): Promise<string> {
 }
 
 function mockRunAgentTask(task: AgentTask): Promise<AgentResult> {
-  if (task.prompt.includes("spec.md")) {
+  if (task.prompt.includes("OpenSpec format")) {
     writeFileSync(join(task.cwd, "spec.md"), specContent());
   }
   return Promise.resolve({
@@ -35,7 +35,13 @@ function mockRunAgentTask(task: AgentTask): Promise<AgentResult> {
   });
 }
 
-function mockCallLlm(): Promise<LlmCallResult> {
+function mockCallLlm(opts: { prompt: string }): Promise<LlmCallResult> {
+  if (opts.prompt.includes("Convert the following spec")) {
+    return Promise.resolve({
+      text: JSON.stringify({ branchName: "feat/full-auto", stories: [] }),
+      usage: { inTok: 5, outTok: 5, costUsd: 0.0001 },
+    });
+  }
   return Promise.resolve({
     text: "Synthesized approach: keep it simple.",
     usage: { inTok: 5, outTok: 5, costUsd: 0.0001 },

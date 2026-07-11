@@ -69,3 +69,15 @@ export function recordReviewMatrix(runDir: string, storyId: string, entry: Revie
   board.review_matrix[storyId] = entry;
   writeSpecBoard(runDir, board);
 }
+
+export function setSpecHash(runDir: string, hash: string): void {
+  const board = readSpecBoard(runDir);
+  board.spec_hash = hash;
+  writeSpecBoard(runDir, board);
+}
+
+export function setConfigHash(runDir: string, hash: string): void {
+  const board = readSpecBoard(runDir);
+  board.config_hash = hash;
+  writeSpecBoard(runDir, board);
+}

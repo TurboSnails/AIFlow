@@ -32,6 +32,7 @@ import {
   type WorktreeContext,
 } from "../worktree/manager";
 import { appendEvent } from "../events/events";
+import { setConfigHash } from "../specboard/specboard";
 import { writeStateAtomic, type EngineState } from "../engine/state";
 import type {
   ModelProfile,
@@ -121,6 +122,8 @@ export async function runCommand(
   const currentLink = join(cwd, ".aiflow", "current");
   try { await unlink(currentLink); } catch { /* ignore */ }
   await symlink(runDir, currentLink, "dir");
+
+  setConfigHash(runDir, realHashConfigDir(cwd));
 
   const { autonomy: pipelineAutonomy, isolation: effectiveIsolation } = resolvePipelineDefaults(pipelineConfig);
   let worktreeCtx: WorktreeContext | undefined;
@@ -215,7 +218,7 @@ export async function runCommand(
       spec: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
         runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { runAgentTask: runAgentTaskWithBudget }, budget),
       plan: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
-        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, undefined, budget),
+        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { callLlm: callLlmFn }, budget),
       human_gate: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, _budget) =>
         runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal),
     },

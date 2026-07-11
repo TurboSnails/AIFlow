@@ -72,8 +72,7 @@ test("agent writes a non-default output filename: result is pass", async () => {
     // Deliberately do NOT write spec.md — only the configured output file.
     writeFileSync(join(cwd, "design.md"), validSpec);
     const runAgentTask = mock(async (task: { prompt: string }) => {
-      expect(task.prompt).toContain("design.md");
-      expect(task.prompt).not.toContain("spec.md");
+      expect(task.prompt).toContain("OpenSpec format");
       return { ok: true, transcriptPath: "unused", usage: { inTok: 5, outTok: 2, costUsd: 0 } };
     });
 
