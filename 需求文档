@@ -1,0 +1,237 @@
+# AIFlow 需求文档（Final v1.0）
+
+> 多智能体协作研发流水线（OpenSpec + Superpowers 融合工作流）
+> 底座：OpenCode（MIT）｜编排器：AIFlow（自研，TypeScript/Bun）｜监控 GUI：借鉴 Claude-Code-Agent-Monitor
+> 状态：**定稿**（合并原《技术设计 v1.0》《需求文档 v2.0》《实现方案 v2.0》三份文档的需求层内容，此文档为唯一需求基线）
+
+---
+
+## 1. 项目定位与目标
+
+AIFlow 是一个**本地优先的多智能体研发编排器**。它把 OpenSpec（规范先行）与 Superpowers（头脑风暴 → 规划 → 执行 → 验证）的研发流程串成可配置流水线，实现"大脑 + 手"的分工：
+
+- **主脑（强模型）**：负责规划、拆解、汇总、仲裁、验收；
+- **执行手（性价比模型）**：负责具体编码、单测与局部验证；
+- 并在两个关键阶段引入**多模型协作**（本项目核心差异化）：
+  - **头脑风暴阶段**：多个模型独立出方案 → 可选多轮辩论 → 主脑汇总，未决分歧上交用户；
+  - **Review 阶段**：多模型交叉互审（作者不审自己的代码），利用训练数据与偏好差异抓单模型盲点，分歧超限时上交用户仲裁。
+
+AIFlow 自身**不实现任何 agent 能力**，所有代码级工作（读代码、写代码、跑命令）委托给 OpenCode；AIFlow 只做编排、门禁、路由、监控。目标场景覆盖三档：人盯着做（interactive）、关键节点确认（gated）、Full-Auto 过夜无人值守（full）。
+
+### 1.1 核心原则（全项目不可违背）
+
+1. **编排与执行分离**：AIFlow 不写业务代码，agent 工作全部委托 OpenCode；
+2. **一切经由文件与 git**：阶段间只通过磁盘产物与 git 提交传递状态，免费获得 resume / 审计 / 并发安全；
+3. **外部依赖收敛到单一适配层**：OpenCode 接口变化只影响 Adapter 一个模块；
+4. **确定性优先**：任何 AI 判断之外必须有确定性检查兜底；AI 输出一律结构化 + schema 校验；**永远不相信 agent 的自述，只相信外部可验证的信号**；
+5. **不 fork、不 patch 上游**：OpenCode、Agent-Monitor 均只使用/借鉴公开接口与设计。
+
+---
+
+## 2. 术语
+
+| 术语 | 含义 |
+| --- | --- |
+| Pipeline | 一次完整研发流程的阶段序列，由 YAML 定义 |
+| Stage | 流水线中的一个阶段，v1 内置 7 种：brainstorm / spec / plan / ralph_loop / review_gate / human_gate / shell |
+| Autonomy（自治级别） | 无人程度开关：`interactive` / `gated` / `full`，见 FR6 |
+| 通道 A / 通道 B | A = OpenCode agent 通道（可读写代码库、执行命令）；B = LLM 直连 HTTP 通道（纯文本，快、省、格式可控） |
+| SpecBoard | 本地黑板文件（specboard.json），所有阶段产物与结论的"唯一事实来源"索引 |
+| 主脑（main-dev） | 负责规划、汇总、仲裁、验收的主模型 |
+| 执行手 | 负责具体编码的模型（可与主脑相同，或更便宜的模型） |
+| Ralph Loop | 每轮全新上下文的"取任务 → 编码 → 门禁 → 提交/记错"开发循环 |
+| Run | 一次流水线执行实例，拥有独立 run 目录与 run_id |
+
+---
+
+## 3. 总体工作流
+
+```
+需求输入
+   │
+   ▼
+[1] Brainstorm（多模型，independent 或 debate 模式）
+   │        产物: brainstorm-report.md（对比矩阵、推荐方案、open_questions）
+   ▼
+[2] human_gate?（按 autonomy 级别决定是否停）── open_questions 非空时强制上交
+   ▼
+[3] Spec 生成（OpenSpec 格式 + 结构化元数据，主脑走通道 A 读代码库）
+   ▼
+[4] human_gate?（确认 spec）
+   ▼
+[5] Plan（spec → prd.json 原子任务切片）
+   ▼
+[6] Develop：Ralph Loop（执行手写码；可选 worktree 隔离）
+   │     每轮内嵌 [6a] 确定性门禁（build / lint / test）
+   │              [6b] 多模型交叉 AI Review（review 矩阵 + 仲裁）
+   ▼
+[7] 汇总验收（run-report.md）；autonomy=full 时自动提交（worktree 留分支），否则等人合并
+```
+
+---
+
+## 4. 功能需求（FR）
+
+### FR1 流水线编排
+
+- FR1.1 Pipeline 由 YAML 定义，内置模板：`full-auto`、`spec-only`、`ralph-only`、`review-only`（对现有 diff 只跑多模型互审）。
+- FR1.2 Stage 类型可插拔（注册表机制），新增 Stage 类型 = 新增一个注册项，不改引擎。
+- FR1.3 CLI 命令集：`aiflow init / run / status / watch / resume / abort / approve / clean / doctor`。
+  - `init`：生成 .aiflow 目录结构 + 追加 .gitignore；
+  - `approve <run> <gate>`：命令行应答 human_gate（与 GUI 应答等价）；
+  - `clean`：回收 worktree、分支与过期 run 目录；
+  - `doctor`：自检 OpenCode 版本可用性、各模型 profile 连通性、git 仓库状态。
+- FR1.4 每次运行产生独立 run 目录（state.json + events.jsonl + artifacts/），崩溃/断电后 `resume` 从第一个非 done 阶段继续，已完成阶段成果不丢。
+- FR1.5 Ctrl+C 优雅暂停：等当前调用结束（双击 Ctrl+C 强制 kill），状态置 paused。
+
+### FR2 多模型头脑风暴（核心）
+
+- FR2.1 参与模型数 ≥ 2，来自 models.yaml profiles，可任意组合（Claude / Kimi / DeepSeek / GLM / Codex 等）。
+- FR2.2 两种模式：
+  - `independent`：各模型并行独立产出方案（方案概述、关键设计、风险、工作量粗估），主脑一次性汇总；
+  - `debate`：第 1 轮独立产出 → 第 2 轮起将**匿名化**的他人方案注入各模型上下文，要求"指出对方方案的具体缺陷（含 severity）+ 修正自己的方案 + 明确保留/放弃的分歧点"。
+- FR2.3 **防死循环三重机制（硬性要求，不可关闭）**：
+  1. `debate_rounds` 硬上限（默认 2，最大 4）；
+  2. 收敛判定：每轮结束由主脑（moderator）输出结构化 JSON `{resolved: [], remaining_disputes: []}`；若 `remaining_disputes` 数量与上一轮相比未减少，**提前终止**辩论（不再收敛即止损）；
+  3. 终止后 `remaining_disputes` 全部写入 `open_questions`，进入 human_gate 由用户裁决——**即使 autonomy=full 也必须停**，唯一豁免是显式配置 `on_unresolved: main_dev_decides`（等于用户事先书面授权主脑代决）。
+- FR2.4 产物 `brainstorm-report.md`：正文 = 对比矩阵 + 推荐方案 + open_questions；附录 = 各模型各轮原始输出（可折叠）。
+- FR2.5 容错：单模型调用失败标注跳过；成功数 < 2 则 Stage 失败。
+- FR2.6 长中文既有文档/老旧代码库梳理场景，支持将长上下文国产模型（如 Kimi）路由权重调高。
+
+### FR3 Spec 生成（OpenSpec 结构化元数据）
+
+- FR3.1 spec.md 采用 **YAML frontmatter + Markdown 正文 + `<task>` 任务切片标签** 混合格式（而非纯 JSON-Schema）：frontmatter 承载机器字段（spec_id、version、branch、依赖、全局验收命令），正文承载人类可读设计，`<task>` 区块承载可被解析器精准切片的原子任务（含 id、priority、depends、files 范围、验收清单）。
+- FR3.2 Spec 生成走通道 A（需读代码库贴合现状）；生成后运行确定性 lint：frontmatter schema 校验、task id 唯一性、每个 task 必含验收标准。
+- FR3.3 spec 是下游所有执行手的唯一"圣经"：SpecBoard 记录其 hash，执行阶段禁止篡改（门禁校验本轮 diff 未触碰 spec 与 .aiflow/config）。
+
+### FR4 Plan 与开发循环（Ralph Loop）
+
+- FR4.1 plan：spec → `prd.json`（`{branchName, stories:[{id,title,acceptance,priority,passes,fix_count}]}`），通道 B + zod 校验。
+- FR4.2 Ralph Loop 每轮 = 选最高优先级未完成 story → 渲染提示词（story + spec 摘要 + progress.md 尾部 + fix_list.md）→ OpenCode **全新会话**执行（每轮新上下文）→ 门禁 → 通过则 prd 标记 passes + git commit + 追加 progress.md，失败则问题清单追加 fix_list.md。
+- FR4.3 限制：`max_iterations`、`stall_limit`（连续无进展轮数上限）、`per_story_fix_limit`（单故事自愈上限，默认 3，超限挂起该故事 suspended）。
+- FR4.4 熔断（防爆 Token 门禁）：`max_retry_steps`、单 run `max_cost_usd`、单次调用 `max_token_cost`，任一超限状态置 paused 并通知，等待 `resume --raise-budget` 或人工处理。
+- FR4.5 安全约束：每轮迭代前记录 HEAD；门禁连续失败且工作区脏时，提供 `--auto-clean` 选项回到干净状态（默认关闭，仅提示）。
+
+### FR5 多模型交叉互审（核心）
+
+- FR5.1 Review 矩阵可配置：`reviewers: [profile...]`（1~2 个），硬规则：**代码作者模型不得作为唯一 reviewer**（作者 ≠ 审者），作者 profile 自动从 reviewer 列表排除。
+- FR5.2 两层门禁顺序固定：先确定性 checks（任一非零退出直接失败返回，不调 AI，省成本），后 AI review。Review 默认走通道 B（diff + 上下文直投 reviewer 模型）；可配 `use_agent: true` 切通道 A 让 reviewer 自主浏览仓库。
+- FR5.3 AI review 输出强制 JSON schema（severity: blocker/major/minor/nit + file/line/title/detail/suggestion），解析失败携错误重试 1 次，再失败按 `strict` 配置放行或阻塞。
+- FR5.4 判定规则可配：`fail_on: [blocker]`、`fail_threshold: {major: 3}`。
+- FR5.5 **多 reviewer 分歧处理（防死循环，硬性要求）**：
+  1. 全体结论一致 → 直接采用（fail 时 issues 合并去重进 fix_list）；
+  2. 结论分歧 → 主脑（Arbitrator）**一次性仲裁**（输入 = diff + 双方 issues），仲裁结论即终局，仲裁本身不进入循环——任何分歧最多"两审一裁"三步；
+  3. 同一 story 的"修复 → 复审"循环最多 `per_story_fix_limit` 轮，超限后：autonomy=full 时挂起该 story 继续下一个，否则上交用户；
+  4. reviewer 提出的 blocker 被执行手连续 2 轮以"不认可"回复 → 直接升级 human_gate / 主脑终审，**禁止继续对喷**。
+- FR5.6 所有 review 原始 JSON 存档 `artifacts/reviews/`；run-report 汇总问题分布（哪个模型抓到了别人没抓到的问题），为后续人工调整 reviewer 组合提供数据。
+
+### FR6 人工门与无人模式开关（Autonomy）
+
+- FR6.1 全局配置 `autonomy: interactive | gated | full`，可被单个 Stage 覆盖。行为矩阵：
+
+| 场景 | interactive | gated（默认） | full |
+| --- | --- | --- | --- |
+| brainstorm 后 | 停，等确认 | 停，等确认 | 不停（open_questions 非空除外） |
+| spec 后 | 停 | 停 | 不停 |
+| open_questions 非空 | 停 | 停 | **停**（除非 on_unresolved: main_dev_decides） |
+| review 分歧/修复超限 | 停 | 停 | 挂起 story 继续 |
+| 每个 story 完成后 | 停 | 不停 | 不停 |
+| 合并冲突主脑裁决失败 | 停 | 停 | 停 |
+| run 结束 | 人工合并 | 人工合并 | 自动 commit（worktree 时留分支，不自动 merge 主干） |
+
+- FR6.2 human_gate 支持 `timeout: none | <时长>` + 超时默认动作；等待中 CLI 与 GUI 均可应答（approve / reject / 编辑产物后 approve）。
+- FR6.3 human_gate 等待期间引擎可安全退出（状态落盘），应答后 resume 消费——过夜等待零成本。
+
+### FR7 Worktree 隔离开关
+
+- FR7.1 配置 `isolation: none | worktree`（pipeline 级或 stage 级）。默认：interactive/gated 为 `none`，full 为 `worktree`。
+- FR7.2 worktree 模式：ralph_loop 在自动创建的 `../<repo>-aiflow-<runid>` worktree 影子分支执行；主脑与用户留在主分支，双工作区物理隔离，互不踩上下文。
+- FR7.3 合并冲突自动处理：抓取 `git diff --name-only --diff-filter=U` → 封装冲突上下文 → 交主脑裁决 → 主脑失败或 autonomy≠full 时上交用户，**不允许系统直接报错中断**。
+- FR7.4 主分支漂移保护：合并前检查 merge-base 漂移量，超阈值（可配）直接上交人类。
+
+### FR8 模型路由
+
+- FR8.1 models.yaml 定义 profiles（channel: opencode | http），运行期可 `--profile` 覆盖，无缝在 Claude / Kimi / DeepSeek / GLM 等之间切换。
+- FR8.2 内置默认路由建议：主脑/spec/仲裁 = 强模型；执行手 = 性价比模型；长中文文档梳理 = 长上下文模型。
+- FR8.3 策略注入：为 OpenCode 主会话提供规则文件，使主脑面对复杂/多文件任务时**绝对优先派发流水线**，而不是自己动手写业务代码。
+- FR8.4 token→成本换算表在 models.yaml 手工维护（v1 简化），逐调用统计上报事件。
+
+### FR9 监控与 GUI
+
+- FR9.1 数据源唯一：`events.jsonl` + `state.json`（文件即接口），CLI watch 与 GUI 消费同一份数据；监控与引擎完全解耦（可另进程运行，挂了不影响流水线）。
+- FR9.2 v1 CLI：`status`（一次性渲染）/ `watch`（1s 轮询 ANSI 刷新）；卡死判定 = 最后事件时间超过 stage.timeout。
+- FR9.3 **Web Dashboard（v1.5 主力 GUI）**：借鉴 Claude-Code-Agent-Monitor 架构（本地 server + SQLite 索引 + WebSocket 推送 + React 前端），必备页面：
+  - **Pipeline Kanban**：Stage/Story 按状态分列（Running / Waiting-Human / Done / Error / Suspended），Waiting 列即 human_gate 待办；
+  - **Debate 视图**：按轮次展示各模型方案、分歧演化、open_questions；
+  - **Review 视图**：diff 与各 reviewer issues 并排、仲裁结论、severity 分布；
+  - **Timeline / Activity Feed**：events.jsonl 实时流，多维过滤；
+  - **成本面板**：按模型/阶段的 token 与费用；
+  - **human_gate 应答**：GUI 内直接 approve / reject / 编辑产物后 approve；
+  - **Run 控制**：pause / resume / abort。
+- FR9.4 GUI 与 OpenCode 的关系：**不 fork OpenCode TUI**；Dashboard 通过 `opencode serve` HTTP API 拉取/深链会话详情（查看执行手完整会话记录），OpenCode 仍可独立以 TUI 使用。
+- FR9.5 通知：human_gate 触发、run 结束、熔断暂停时支持系统通知 / Webhook（可接飞书、TG bot）。
+
+### FR10 MCP 可选适配层
+
+- FR10.1 **核心编排不依赖 MCP**（批处理形态用"子进程 + 文件"更稳；理由详见技术设计文档 §9.5）。
+- FR10.2 提供可选 `aiflow-mcp` 薄封装 server（stdio），把 `aiflow_brainstorm / aiflow_review_diff / aiflow_run / aiflow_status` 暴露为 MCP tools，供用户在 Claude Code / OpenCode 交互会话中随手调用多模型讨论/互审——MCP 是**入口之一，不是总线**。
+
+---
+
+## 5. 非功能需求（NFR）
+
+| # | 需求 |
+| --- | --- |
+| NFR1 | 可恢复：任意时刻 kill/断电后 `resume` 不丢已完成阶段成果（state.json 原子写） |
+| NFR2 | 成本可控：预算超限自动 paused；events.jsonl 逐调用记录 token 与估算费用；LLM 瞬时错误指数退避重试 ≤3 次 |
+| NFR3 | 可审计：所有 AI 输入输出、门禁结果、辩论轮次、仲裁结论落盘；run 结束生成 run-report.md（耗时、成本、review 问题分布、故事完成表）可复盘 |
+| NFR4 | 可扩展：新增 Stage 类型 / 模型 provider = 新增注册项，不动引擎 |
+| NFR5 | 安全：API key 仅经环境变量（api_key_env 间接引用）；日志/报告统一脱敏；.aiflow/config 只读约定 + 每轮门禁 hash 校验防 AI 篡改；checks 命令运行前回显；runs/ 入 .gitignore |
+| NFR6 | GUI 只读优先：Dashboard 除 human_gate 应答与 run 控制外不具备改代码能力；默认仅绑定 localhost |
+| NFR7 | 可替换底座：执行后端经 Adapter 隔离，未来可换/并入其他 agent 框架而不动引擎 |
+
+---
+
+## 6. 关键开关汇总（一页看全）
+
+```yaml
+autonomy: gated              # interactive | gated | full（无人模式总开关）
+isolation: worktree          # none | worktree（物理隔离开关）
+brainstorm:
+  mode: debate               # independent | debate
+  debate_rounds: 2           # 硬上限（最大 4）
+  on_unresolved: ask_human   # ask_human | main_dev_decides
+review:
+  reviewers: [reviewer-kimi] # 1~2 个，作者模型自动排除
+  use_agent: false           # reviewer 是否自主浏览仓库（通道 A）
+  fail_on: [blocker]
+  fail_threshold: { major: 3 }
+  strict: false              # AI review 自身失败时是否阻塞
+  per_story_fix_limit: 3
+budget:
+  max_cost_usd: 20
+  max_retry_steps: 5
+```
+
+---
+
+## 7. 验收标准
+
+1. **全流程**：示例 Flutter 仓库上 `aiflow run full-auto -m "为 App 增加离线缓存"` 跑通，产出 brainstorm-report / spec / prd / 通过门禁的 commits / run-report。
+2. **辩论防死循环**：debate 模式人为构造分歧，验证轮数封顶、收敛提前终止、open_questions 上交 human_gate（含 full 模式下强制停）。
+3. **互审仲裁**：双 reviewer 结论冲突时主脑仲裁一次定论；单 story 修复超 3 轮被挂起而非死循环。
+4. **恢复与熔断**：运行中 kill 进程后 `resume` 断点续跑；调低预算触发 paused；LLM 429 重试生效。
+5. **Worktree**：开/关两种模式均完成合并；构造冲突验证"上交主脑裁决 → 裁决失败上交人类"完整路径。
+6. **安全**：构造执行手篡改 .aiflow/config 与 spec.md 的 diff，门禁 hash 校验拦截。
+7. **GUI**：Dashboard 实时显示 Kanban / Timeline / Debate / Review / 成本，并在 GUI 内完成一次 human_gate 应答与一次 pause/resume。
+8. **doctor**：断网/错 key/缺 OpenCode 三种坏境下 doctor 给出准确诊断。
+
+---
+
+## 8. 范围外（v2+ 展望）
+
+- 多 story 并行（多 worktree 并发）——run 目录按 run_id 隔离已为此预留；
+- Reviewer 权重自学习（基于 FR5.6 统计数据）；
+- Flutter Desktop 原生 GUI（Dashboard 已按"只读文件源"设计，迁移零改核心）；
+- 下沉为 OpenCode 插件形态；
+- Debate 分歧演化可视化图表（v1.5 先做表格 + 轮次 tab）。

@@ -1,0 +1,626 @@
+# AIFlow 技术设计文档（Final v1.0）
+
+> 对应需求文档：《AIFlow 需求文档 Final v1.0》
+> 底座：OpenCode（MIT）｜状态：**定稿**
+> 本文档自包含：合并原《技术设计 v1.0》全文与《实现方案 v2.0》全部增量，无需再查阅旧文档。
+
+---
+
+## 1. 设计原则
+
+1. **编排与执行分离**：AIFlow 只做"编排、门禁、路由、监控"，所有代码级 agent 工作（读代码、写代码、跑命令）全部委托给 OpenCode。AIFlow 自身不实现任何 agent 能力。
+2. **一切经由文件与 git**：阶段之间只通过磁盘产物（artifact 文件）与 git 提交传递状态，不依赖内存态。免费获得可恢复性（resume）、可审计性与并发安全。
+3. **OpenCode 调用收敛到单一适配层**：外部依赖的接口变化只影响 Adapter 一个模块。
+4. **确定性优先**：任何"AI 判断"之外必须有确定性检查兜底；AI 输出一律要求结构化格式并做 schema 校验；永远不相信 agent 的自述，只相信外部可验证的信号。
+5. **不 fork、不 patch**：仅使用 OpenCode 公开的 CLI / Server API / 插件与 Agent 配置机制；Agent-Monitor 只借鉴架构与页面设计。
+
+三个贯穿全局的关键策略：
+
+- **MCP 不做总线，只做可选入口**（见 §9.5）：核心用 CLI 子进程 + 文件事件流，外层可选包一层薄 MCP server。
+- **辩论与互审必须有确定性终止条件**（见 §9.2/§9.3）：轮数封顶、分歧数不再收敛即止损、上交人类——三者内置，不可关闭。
+- **GUI 不 fork OpenCode**（见 §10）：自建 Web Dashboard 消费 events.jsonl，会话详情反代 `opencode serve` API。
+
+---
+
+## 2. 总体架构
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    AIFlow CLI (TypeScript / Bun)                 │
+│                                                                  │
+│  ┌────────────┐      ┌─────────────────────────────────────┐    │
+│  │  Pipeline  │ ───▶ │            Stage Runners             │    │
+│  │  Engine    │      │  BrainstormRunner ─▶ DebateOrchestr. │    │
+│  │  (状态机)   │      │  Spec/PlanRunner                     │    │
+│  │            │      │  RalphLoopRunner                     │    │
+│  │  ├AutonomyPolicy  │  ReviewGateRunner ─▶ ReviewMatrix    │    │
+│  │  ├WorktreeManager │                      └▶ Arbitrator   │    │
+│  │  └Budget/熔断     │  HumanGate / Shell                   │    │
+│  └────────────┘      └──────────────┬──────────────────────┘    │
+│        │ 写 state.json / events.jsonl / specboard.json           │
+│        ▼                            │                            │
+│  ┌───────────┐   ┌──────────────┐   ┌────────────────┐          │
+│  │ OpenCode  │   │  LLM Client  │   │  Check Runner  │          │
+│  │ Adapter   │   │ (直连 HTTP)   │   │ (shell 执行     │          │
+│  │(run/serve)│   │ brainstorm/  │   │  build/lint/    │          │
+│  └─────┬─────┘   │ review/plan  │   │  test)          │          │
+│        │         └──────┬───────┘   └────────────────┘          │
+└────────┼────────────────┼───────────────────────────────────────┘
+         ▼                ▼
+   OpenCode CLI      各模型 HTTP API
+   (Claude 等主      (Kimi / DeepSeek / GLM / Claude …)
+    开发模型)
+
+  ┌──────────────────────────────────────┐
+  │ aiflow-mcp（可选薄封装 MCP server）    │ ← 仅 spawn 转发 CLI 能力
+  └──────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│  Dashboard Server（v1.5，独立进程，仿 Agent-Monitor 架构）         │
+│  chokidar tail events.jsonl ─▶ SQLite 索引 ─▶ Express + WebSocket │
+│  React 前端：Kanban / Debate / Review / Timeline / 成本 / Gate 应答│
+│  （执行手会话详情：反向代理 opencode serve API，只读展示）          │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**关键决策：两条模型通道**
+
+- **通道 A（agent 通道）**：需要读写代码库、执行命令的阶段（ralph_loop、spec 生成的代码调研、可选的 agent 式 review、合并冲突裁决）走 **OpenCode**，利用其 provider 体系选模型。
+- **通道 B（纯文本通道）**：不需要 agent 能力的阶段（brainstorm 提案与辩论、review 的 diff 分析、plan 转换、汇总规整、仲裁）走 **LLM Client 直连 HTTP API**。原因：更快、更省 token、输出格式可控（可要求纯 JSON）、失败重试逻辑简单。
+- Review 默认通道 B；配置 `review.use_agent: true` 可切通道 A 让 reviewer 自主浏览仓库。
+
+---
+
+## 3. 技术选型
+
+| 项 | 选择 | 理由 |
+| --- | --- | --- |
+| 语言/运行时 | TypeScript + Bun（兼容 Node） | 与 OpenCode 插件生态同栈，未来可下沉为 OpenCode 插件；开发效率高 |
+| CLI 框架 | commander 或 citty | 轻量成熟 |
+| 配置格式 | YAML（zod 做 schema 校验） | 人类可读，校验后转强类型 |
+| 状态存储 | 文件（JSON/JSONL）+ git | 设计原则 2；引擎侧不引入数据库 |
+| TUI（watch） | 简单 ANSI 刷新 | 控制范围，不引入重型 TUI 库 |
+| OpenCode 集成 | 优先 `opencode run`（headless）；需要会话续接/事件流时用 `opencode serve` HTTP API | 先用最简单可行的接口 |
+| Dashboard（v1.5） | Express + better-sqlite3(WAL) + ws + React/Vite/Tailwind | 借鉴 Agent-Monitor 成熟组合；SQLite 仅作只读索引缓存 |
+
+> OpenCode 的 headless 参数、server API 路径以集成时实际版本为准，全部封装在 Adapter 内（§8.1），由 `aiflow doctor` 自检。
+
+---
+
+## 4. 目录与文件布局
+
+```
+<用户项目根>/
+├── .aiflow/
+│   ├── config/
+│   │   ├── models.yaml              # 模型档案
+│   │   ├── pipelines/               # pipeline 定义（含内置模板副本）
+│   │   │   ├── full-auto.yaml
+│   │   │   ├── spec-only.yaml
+│   │   │   ├── ralph-only.yaml
+│   │   │   └── review-only.yaml
+│   │   └── project.yaml             # 项目级设置（checks 命令、预算、autonomy、isolation 等）
+│   ├── runs/
+│   │   └── 2026-07-10_1432_a1b2/    # 每次运行一个目录（run id）
+│   │       ├── state.json           # 引擎状态机快照（resume 依据）
+│   │       ├── events.jsonl         # 结构化事件流（监控唯一数据源）
+│   │       ├── specboard.json       # 黑板：产物索引 + spec hash + open_questions
+│   │       ├── gate-answer.json     # human_gate 应答落点（CLI/GUI 写入，resume 消费）
+│   │       ├── artifacts/
+│   │       │   ├── brainstorm-report.md
+│   │       │   ├── debate/round-1.json …        # 每轮辩论落盘
+│   │       │   ├── spec.md
+│   │       │   ├── prd.json
+│   │       │   ├── progress.md
+│   │       │   ├── fix_list.md
+│   │       │   └── reviews/T1-round-2.json …    # review 与仲裁原始 JSON
+│   │       ├── transcripts/         # OpenCode 会话记录 + 子进程 stdout/stderr 全量
+│   │       └── run-report.md
+│   └── current -> runs/…            # 指向进行中运行的符号链接
+└── .gitignore                        # aiflow init 时追加 .aiflow/runs/
+```
+
+---
+
+## 5. 核心配置格式
+
+### 5.1 models.yaml
+
+```yaml
+profiles:
+  main-dev:                        # 主脑（规划/spec/仲裁/合并裁决）
+    channel: opencode
+    provider: anthropic
+    model: claude-sonnet-4-6       # 示例，以实际可用型号为准
+  reviewer-kimi:
+    channel: http
+    provider: moonshot
+    model: kimi-k2
+    base_url: https://api.moonshot.cn/v1
+    api_key_env: MOONSHOT_API_KEY
+    price: { in_per_m: 0.0, out_per_m: 0.0 }   # token→成本换算，手工维护
+  ds:
+    channel: http
+    provider: deepseek
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+```
+
+### 5.2 pipeline 定义（full-auto 完整示例）
+
+```yaml
+name: full-auto
+autonomy: full                # interactive | gated | full（可被 stage 覆盖）
+isolation: worktree           # none | worktree
+budget:
+  max_cost_usd: 20
+  max_retry_steps: 5
+stages:
+  - id: brainstorm
+    type: brainstorm
+    models: [main-dev, reviewer-kimi, ds]   # ≥2 个
+    mode: debate                            # independent | debate
+    debate_rounds: 2                        # 硬上限
+    on_unresolved: ask_human                # ask_human | main_dev_decides
+    synthesizer: main-dev
+    output: brainstorm-report.md
+
+  - id: confirm-brainstorm
+    type: human_gate
+    prompt: "请确认头脑风暴结论后继续"
+    timeout: none               # none = 一直等；或 30m + 默认动作
+    # autonomy=full 且无 open_questions 时自动跳过（AutonomyPolicy 决定）
+
+  - id: spec
+    type: spec
+    model: main-dev             # 通道 A，读代码库
+    input: brainstorm-report.md
+    output: spec.md
+
+  - id: confirm-spec
+    type: human_gate
+    prompt: "请确认 spec.md 后继续"
+
+  - id: plan
+    type: plan
+    model: main-dev             # 通道 B + JSON 校验
+    input: spec.md
+    output: prd.json
+
+  - id: develop
+    type: ralph_loop
+    model: main-dev             # 执行手，可换便宜 profile
+    max_iterations: 10
+    stall_limit: 3
+    per_story_fix_limit: 3
+    gate:
+      checks:                   # 第一层：确定性门禁
+        - flutter analyze
+        - flutter test
+      ai_review:
+        enabled: true
+        reviewers: [reviewer-kimi]        # 1~2 个，作者 profile 自动排除
+        use_agent: false
+        fail_on: [blocker]
+        fail_threshold: { major: 3 }
+        strict: false
+```
+
+---
+
+## 6. 核心数据结构
+
+### 6.1 state.json（引擎状态机快照）
+
+```json
+{
+  "run_id": "2026-07-10_1432_a1b2",
+  "pipeline": "full-auto",
+  "autonomy": "full",
+  "isolation": "worktree",
+  "requirement": "为 App 增加离线缓存……",
+  "worktree": { "path": "../myapp-aiflow-a1b2", "branch": "aiflow/a1b2" },
+  "stages": [
+    { "id": "brainstorm",  "status": "done", "artifact": "brainstorm-report.md" },
+    { "id": "spec",        "status": "done" },
+    { "id": "confirm-spec","status": "done" },
+    { "id": "plan",        "status": "done" },
+    { "id": "develop",     "status": "running", "iteration": 4 }
+  ],
+  "cost": { "input_tokens": 812345, "output_tokens": 90321, "est_usd": 6.42 }
+}
+```
+
+每次状态变更 = 原子写入（写临时文件 + rename），保证崩溃一致性；`resume` 读取 state.json 从第一个非 done 阶段继续。stage.status 取值：`pending | running | waiting_human | done | failed | paused | suspended`。
+
+### 6.2 specboard.json（黑板）
+
+```json
+{
+  "requirement": "…",
+  "artifacts": { "brainstorm": "artifacts/brainstorm-report.md", "spec": "artifacts/spec.md" },
+  "spec_hash": "sha256:…",
+  "open_questions": [
+    { "id": "D1", "topic": "sqflite 还是 drift", "positions": { "anon-A": "…", "anon-B": "…" }, "resolution": null }
+  ],
+  "decisions": [ { "id": "D0", "topic": "缓存失效策略", "resolution": "TTL+版本号", "by": "debate-round-2" } ]
+}
+```
+
+所有 Agent 任务的提示词渲染都以 SpecBoard 为唯一事实来源入口；open_questions 的 resolution 由 human_gate 应答或主脑代决写回。
+
+### 6.3 AI Review 输出 Schema（zod 校验）
+
+```json
+{
+  "summary": "string",
+  "verdict": "pass | fail",
+  "issues": [
+    {
+      "severity": "blocker | major | minor | nit",
+      "file": "lib/cache/store.dart",
+      "line": 42,
+      "title": "并发写入未加锁",
+      "detail": "…",
+      "suggestion": "…"
+    }
+  ]
+}
+```
+
+解析失败 → 携解析错误重试 1 次 → 再失败按 `strict` 决定放行或阻塞。
+
+### 6.4 辩论轮次落盘（artifacts/debate/round-N.json）
+
+```json
+{
+  "round": 2,
+  "proposals": [
+    { "author": "anon-A", "profile_real": "main-dev", "content_md": "…",
+      "stance_changes": ["放弃双写策略"],
+      "critiques": [{ "target": "anon-B", "point": "…", "severity": "major" }] }
+  ],
+  "moderator": {
+    "resolved": ["缓存失效策略统一为 TTL+版本号"],
+    "remaining_disputes": [
+      { "id": "D1", "topic": "sqflite 还是 drift", "positions": { "anon-A": "…", "anon-B": "…" } }
+    ]
+  }
+}
+```
+
+### 6.5 events.jsonl（每行一条，监控唯一数据源）
+
+```json
+{"ts":"…","type":"stage_start","stage":"develop","iteration":4}
+{"ts":"…","type":"llm_call","stage":"develop","model":"main-dev","in_tok":51234,"out_tok":8123,"est_usd":0.31}
+{"ts":"…","type":"debate_round","round":2,"resolved":1,"remaining":2}
+{"ts":"…","type":"debate_end","reason":"converged|max_rounds|stalled","open_questions":2}
+{"ts":"…","type":"gate_result","stage":"develop","story":"T3","checks":"pass","ai_review":"fail","blockers":1}
+{"ts":"…","type":"review_verdict","story":"T1","reviewers":{"kimi":"fail","ds":"pass"},"arbitrated":true,"final":"fail"}
+{"ts":"…","type":"gate_waiting","gate":"unresolved_questions","questions":["D1","D2"]}
+{"ts":"…","type":"gate_answered","by":"cli|dashboard","action":"approve|reject"}
+{"ts":"…","type":"worktree","action":"create|merge|conflict","branch":"aiflow/a1b2"}
+{"ts":"…","type":"stage_done","stage":"develop","result":"success"}
+```
+
+`status` / `watch` / Dashboard / 成本预算 / 卡死检测（最后事件时间 > stage.timeout）全部只消费这一份数据源。
+
+---
+
+## 7. Pipeline Engine 与策略层
+
+### 7.1 Engine（状态机）
+
+- 输入：pipeline 配置 + 需求文本；驱动 Stage Runner 顺序执行。
+- 统一 Runner 接口，注册表挂载（新增 Stage 类型 = 新增注册项）：
+
+```ts
+interface StageRunner {
+  type: string;   // "brainstorm" | "ralph_loop" | …
+  run(ctx: StageContext): Promise<StageOutcome>;  // ctx: 配置、artifact 读写器、事件上报器、SpecBoard
+}
+```
+
+- 引擎职责：顺序调度、状态原子持久化、预算累计与超限暂停、human_gate 交互、SIGINT 优雅收尾（状态置 paused，双击强杀）。
+
+### 7.2 AutonomyPolicy（无人模式开关落地）
+
+实现为纯函数策略层，引擎在每个"潜在停点"调用：
+
+```ts
+type Autonomy = "interactive" | "gated" | "full";
+type GatePoint = "after_brainstorm" | "after_spec" | "unresolved_questions"
+               | "review_dispute_exceeded" | "after_story" | "run_end"
+               | "merge_conflict_unarbitrable";
+
+function shouldPause(a: Autonomy, p: GatePoint, cfg: PipelineCfg): PauseDecision;
+```
+
+要点：
+
+- `unresolved_questions` 三档下**默认都停**，唯一豁免是显式配置 `on_unresolved: main_dev_decides`（用户事先书面授权）。
+- human_gate 等待时引擎不空转：状态置 `waiting_human` 落盘后进程可退出；应答经 `aiflow approve` 或 Dashboard POST 写入 `gate-answer.json`，`resume` 消费。CLI 与 GUI 应答天然统一，过夜等待零成本。
+
+---
+
+## 8. 基础模块
+
+### 8.1 OpenCode Adapter
+
+对外只暴露一个方法：
+
+```ts
+interface AgentTask {
+  profile: ModelProfile;   // 必须 channel=opencode
+  prompt: string;          // 模板渲染后的完整任务提示词
+  cwd: string;             // 项目根或 worktree 根
+  timeoutMs: number;
+}
+interface AgentResult {
+  ok: boolean;
+  transcriptPath: string;  // 会话记录落盘路径
+  usage: { inTok: number; outTok: number };
+}
+runAgentTask(task: AgentTask): Promise<AgentResult>
+```
+
+实现要点：
+
+- 子进程方式调用 `opencode run`（非交互、指定 model、输出 JSON/日志重定向）；每个 Ralph 迭代 = 一次全新调用（天然满足"每轮新上下文"）。
+- 超时 kill 进程树；stdout/stderr 全量落盘 `transcripts/`。
+- 参数拼装与版本差异全部隔离在本模块；`adapter.selftest` 供 `aiflow doctor` 调用验证当前 OpenCode 版本可用。
+- `cwd` 由 WorktreeManager 注入（isolation=worktree 时指向影子工作区）。
+
+### 8.2 LLM Client（直连通道）
+
+- 统一 OpenAI 兼容风格 chat 封装（Kimi/DeepSeek/GLM 均有兼容端点；Anthropic 单独适配）。
+- 能力：并发调用（brainstorm fan-out）、指数退避重试（429/5xx ≤3 次）、JSON 模式（system 强约束 + 剥离 markdown 围栏 + zod 校验 + 正则抽取围栏 JSON 兜底）、逐调用 token 统计上报事件。
+
+### 8.3 Check Runner
+
+- 顺序执行配置中的 `checks` shell 命令，任一非零退出即失败；失败输出截断后进 fix_list。
+- 运行前在人类可见日志回显完整命令（防配置被 AI 篡改的可见性保障）。
+
+### 8.4 WorktreeManager
+
+```
+isolation=none     → ralph_loop 在当前工作区执行（interactive 场景）
+isolation=worktree → run 开始: git worktree add ../<repo>-aiflow-<runid> -b aiflow/<runid>
+                     每个 story commit 落影子分支
+                     run 结束: autonomy=full → 仅保留分支 + 生成合并指引
+                               gated/interactive → 尝试 merge --no-ff 回主干
+冲突路径: git diff --name-only --diff-filter=U → 渲染冲突上下文
+        → 主脑裁决（通道 A，允许改文件解冲突）
+        → 主脑失败或 autonomy≠full → gate: merge_conflict_unarbitrable（绝不直接报错中断）
+漂移保护: 合并前 git merge-base 检查主分支漂移量，超阈值（默认 >50 文件）直接上交人类
+清理: aiflow clean 统一回收 worktree 与分支；残留由 doctor 检测提示
+```
+
+---
+
+## 9. 阶段 Runner 设计
+
+### 9.1 Brainstorm Runner
+
+1. fan-out：对 models 列表并行调用 LLM Client（channel=http；opencode 通道 profile 降级提示）；统一模板要求输出：方案概述、关键设计、风险、工作量粗估。
+2. debate 模式：交给 DebateOrchestrator（§9.2）。
+3. fan-in：synthesizer（主脑）接收全部方案，产出对比矩阵 + 推荐方案 + open_questions。
+4. 产物 `brainstorm-report.md`：正文 = 汇总；附录 = 各模型各轮原始输出。
+5. 容错：单模型失败标注跳过；成功数 <2 则 Stage 失败。
+
+### 9.2 DebateOrchestrator（多模型辩论协议）
+
+流程与终止算法：
+
+```
+round 1: fan-out 独立提案（并行，通道 B）
+loop round 2..debate_rounds:
+    每个模型收到: 自己上轮提案 + 他人匿名化提案 + moderator 上轮 remaining_disputes
+    要求输出: 具体批驳(含 severity) + 修正后的提案 + 明确 stance_changes
+    moderator(主脑) 归纳 resolved / remaining_disputes（结构化 JSON）
+    if len(remaining_disputes) == 0: break                  # 收敛
+    if len(remaining_disputes) >= len(上轮 disputes): break  # 不再收敛，提前止损
+fan-in: 主脑产出对比矩阵 + 推荐方案
+open_questions = remaining_disputes → 写入 specboard.json → 触发 gate（AutonomyPolicy 决定停/放行）
+```
+
+工程细节：
+
+- **匿名化是必须的**：去掉模型名防"权威偏好"（弱模型盲从强模型名气）；真实映射只写 debug 附录。
+- 每轮每模型一次无状态调用，上下文全部显式注入——不依赖对话历史，天然可重放、可断点续跑。
+- dispute 用稳定 id（D1/D2）跨轮追踪，收敛判定基于 id 集合而非文本相似度，简单可靠。
+- moderator 对空泛批评（无 file/点位/severity 的"我觉得都挺好"）打回重答一次。
+
+### 9.3 Review Gate Runner（ReviewMatrix + Arbitrator）
+
+```
+输入: 本轮 diff + story 验收标准 + 项目约定摘要（diff 超长按文件分块多次调用后合并）
+step0 确定性附加规则: 校验 diff 未触碰 spec.md / .aiflow/config（hash 比对）；
+      task.files 越界检查（v1 先 warning 计入 review 上下文）
+step1 确定性 checks: Check Runner 顺序执行，任一失败直接返回（不调 AI，省成本）
+step2 AI review: 并行调用 reviewers（自动排除本轮代码作者 profile），schema 校验
+step3 判定:
+   全体 pass → pass
+   全体 fail → fail（issues 按 file+line±3+severity 粗合并去重进 fix_list）
+   分歧     → Arbitrator（主脑）一次性仲裁：输入=diff+双方 issues，输出终局 verdict+理由
+step4 循环控制:
+   story.fix_count++；超 per_story_fix_limit → 挂起(suspended)
+   执行手连续 2 轮对同一 blocker 回复"不认可" → 跳过修复循环，升级 gate
+```
+
+- 仲裁**不进入循环**（一次定论），任何分歧最多"两审一裁"三步——这是防"模型对喷"的关键。
+- 全部 review 与仲裁原始 JSON 存档 `artifacts/reviews/`，run-report 汇总各 reviewer 独有发现的统计。
+
+### 9.4 Spec / Plan / Ralph Loop Runner
+
+**Spec Runner**：通道 A（主脑读代码库），模板要求产出符合下述 OpenSpec 格式的 spec.md；生成后跑确定性 lint（frontmatter schema、task id 唯一、每 task 必含验收）。
+
+**OpenSpec 结构化元数据格式**（frontmatter + `<task>` 混合，不用纯 JSON-Schema——spec 首先给人和主脑读，Markdown 可读性不可牺牲，机器切片只需局部结构化）：
+
+```markdown
+---
+spec_id: offline-cache-001
+version: 1
+branch: feat/offline-cache
+verify_all: ["flutter analyze", "flutter test"]
+depends: []
+---
+
+# 离线缓存设计
+（人类可读正文：背景、方案、架构图……）
+
+<task id="T1" priority="1" files="lib/cache/**">
+## 实现 CacheStore 接口与 sqflite 落地
+验收:
+- [ ] `flutter test test/cache/store_test.dart` 通过
+- [ ] 并发写入有锁保护
+</task>
+
+<task id="T2" priority="2" depends="T1" files="lib/repo/**">
+…
+</task>
+```
+
+解析器：提取 frontmatter（zod）→ 正则切 `<task>` 块 → 生成 prd.json；`files` 字段供 review 越界检查。
+
+**Plan Runner**：spec.md → `prd.json`（`{branchName, stories:[{id,title,acceptance,priority,passes,fix_count}]}`），通道 B + zod 校验。
+
+**Ralph Loop Runner**（单轮伪代码）：
+
+```
+story  = prd.json 中优先级最高且 passes=false 且非 suspended 的故事
+prompt = 渲染模板(story, spec 摘要, progress.md 尾部, fix_list.md)   // 均取自 SpecBoard 索引
+result = OpenCodeAdapter.runAgentTask(执行手 profile, prompt, cwd=工作区)
+gate   = ReviewGate.run(diff = git diff, story)
+if gate.pass:
+    prd 标记 passes=true；git commit；追加 progress.md（做了什么、学到的坑）
+else:
+    fix_list.md 追加 gate 问题清单；story.fix_count += 1
+    if fix_count > per_story_fix_limit: story 置 suspended
+终止检查: 全部 passes / 达 max_iterations / 连续 stall_limit 轮无状态变化
+```
+
+安全约束：迭代前记录 `git rev-parse HEAD`；门禁连续失败且工作区脏时提供 `--auto-clean`（下一轮前 `git checkout .`，默认关闭仅提示）。
+
+### 9.5 aiflow-mcp（可选薄封装）
+
+核心不用 MCP 作总线的理由：
+
+1. 流水线是**批处理**形态，子进程"启动-干活-退出"天然匹配；MCP 长连接在过夜场景要额外处理心跳、重连、半开连接。
+2. 文件传参（spec.md/prd.json/diff）比 MCP 参数序列化更适合大产物，且免费获得审计与 resume。
+3. OpenCode 对外本就是 CLI/HTTP，再套 MCP 是多余间接层。
+
+可选层实现（约半天）：标准 MCP server（stdio），4 个 tool 全部 spawn 转发 aiflow CLI：
+
+- `aiflow_brainstorm(topic, profiles?)` → report 路径 + 摘要
+- `aiflow_review_diff(diff | ref范围, reviewers?)` → verdict + issues
+- `aiflow_run(pipeline, requirement)` → run_id（异步不阻塞）
+- `aiflow_status(run_id)` → 状态摘要
+
+在 Claude Code / OpenCode 里配上即可获得"交互中随手叫多模型讨论/互审"的体验，流水线核心零污染。
+
+---
+
+## 10. 监控与 GUI
+
+### 10.1 Monitor（CLI，随 v1 交付）
+
+- 只读消费 `events.jsonl` + `state.json`，与引擎完全解耦（可另终端/进程运行）。
+- `status` 一次性渲染；`watch` 1s 轮询 ANSI 重绘；卡死判定：`now - last_event_ts > stage.timeout`。
+- run 结束由引擎生成 `run-report.md`（耗时、成本、review 问题分布、故事完成表）。
+
+### 10.2 Web Dashboard（v1.5 主力 GUI，仿 Agent-Monitor）
+
+```
+collector: chokidar 监听 runs/*/events.jsonl 增量行 ─▶ better-sqlite3(WAL) 索引
+           行号游标持久化保证幂等；重启全量重扫；SQLite 仅是缓存可随时删
+server:    Express REST（runs/stages/stories/reviews/debates/costs 查询、
+           gate 应答 POST、pause/resume/abort 控制）+ ws 广播增量事件
+client:    React + Vite + Tailwind（沿用 Agent-Monitor 的 Kanban/Timeline/Feed 组件思路）
+
+页面映射:
+  Agent-Monitor Kanban          → Pipeline/Story Kanban（Waiting 列 = human_gate 待办）
+  Session Detail / Conversation → Run Detail + OpenCode 会话记录查看（反代 opencode serve）
+  Analytics                     → 成本/token/review 问题分布
+  新增: Debate 视图（轮次 tab + 分歧演化表）、Review 视图（diff 与 issues 并排 + 仲裁结论）
+```
+
+关键取舍：**collector 只读文件**，不让 Runner 直接 POST dashboard——文件是唯一事实来源，dashboard 挂了流水线照跑。（Agent-Monitor 用 hook POST 是因为 Claude Code 只有 hook 出口；我们有 jsonl，文件更稳。）
+
+### 10.3 与 OpenCode 深度整合（v2 展望）
+
+Dashboard 内嵌"执行手会话实况"：ralph_loop 改走 `opencode serve` 模式建会话，反代其事件流实现打字机级实况；评估 OpenCode 官方 web UI 成熟后以插件形式贴入。
+
+---
+
+## 11. 错误处理与恢复策略汇总
+
+| 故障 | 策略 |
+| --- | --- |
+| LLM API 瞬时错误（429/5xx/超时） | 指数退避重试 ≤3 次 |
+| AI 输出非法 JSON | 携错误重试 1 次 → 按 strict 配置放行/阻塞；兜底正则抽取围栏 JSON |
+| OpenCode 子进程超时/崩溃 | kill 进程树，本轮迭代记失败进下一轮（计入 stall） |
+| 辩论不收敛 | 分歧数不减即提前终止，remaining_disputes 转 open_questions 上交 |
+| reviewer 分歧 | 主脑一次性仲裁定论，不循环 |
+| 修复循环超限 | story 挂起 suspended，full 模式继续下一 story，否则上交 |
+| 合并冲突 | 主脑裁决 → 失败上交人类，绝不直接报错中断 |
+| 进程被 kill / 断电 | state.json 原子写保证一致；`aiflow resume` 续跑 |
+| 预算超限 | paused + 通知，等待 `resume --raise-budget <n>` |
+| 用户 Ctrl+C | 优雅暂停（双击强杀），状态置 paused |
+
+---
+
+## 12. 安全设计
+
+- API Key 只经环境变量读取（`api_key_env` 间接引用）；日志/报告输出前经统一脱敏函数（匹配已知 key 前缀与配置 env 值）。
+- `aiflow init` 自动将 `.aiflow/runs/` 加入 `.gitignore`。
+- checks 与 shell Stage 命令均来自用户配置，运行前回显完整命令；`.aiflow/config/` 对 agent 会话声明只读约定，每轮门禁前校验配置与 spec 的 hash 未被本轮 diff 修改（防 AI 篡改，确定性拦截）。
+- Dashboard 默认仅绑定 localhost + same-origin（Agent-Monitor 同款做法）；gate 应答与 run 控制是仅有的写操作。
+
+---
+
+## 13. 测试策略
+
+- **单元测试**：状态机流转、配置 schema、AutonomyPolicy 行为矩阵、辩论收敛判定、review/仲裁判定规则、issue 去重、JSON 解析容错、成本累计。
+- **集成测试（mock 层）**：fake OpenCode Adapter + fake LLM Client 跑通 full-auto 全流程，覆盖 resume、预算暂停、stall 终止、辩论提前止损、仲裁、story 挂起、gate-answer 消费。
+- **端到端验收**：对应需求文档 §7，在示例 Flutter/TS 仓库以真实模型跑通（预算上限保护）。
+- **doctor 自检**：OpenCode 版本、各 profile 连通性、git 仓库状态、worktree 残留。
+
+---
+
+## 14. 里程碑
+
+| 里程碑 | 内容 | 估算 |
+| --- | --- | --- |
+| M0 | 脚手架 + OpenCode Adapter + doctor + LLM Client 双通道 | 1 周 |
+| M1 | Engine + spec/plan/ralph_loop/review_gate（单 reviewer）+ resume + 预算熔断 + CLI watch | 2 周 |
+| M2 | DebateOrchestrator + ReviewMatrix/Arbitrator + AutonomyPolicy + human_gate 文件应答 | 1.5 周 |
+| M3 | WorktreeManager + aiflow-mcp 可选层 + 端到端验收（Flutter 示例仓库） | 1 周 |
+| M4（v1.5） | Dashboard：collector/server/client，Kanban+Timeline+Debate+Review+Gate 应答+Run 控制 | 2~3 周 |
+
+顺序说明：M2 在 M3 前——辩论/互审是核心差异化，worktree 只是安全垫。集成第一天先做 OpenCode headless 探测脚本（doctor 雏形）。
+
+---
+
+## 15. 风险与对策
+
+| 风险 | 对策 |
+| --- | --- |
+| 辩论产出"正确的废话"，模型互相客气 | 提示词强制每轮至少 N 个具体缺陷 + severity；匿名化；moderator 打回空泛批评 |
+| 仲裁主脑系统性偏袒某类风格 | review_verdict 事件积累矩阵数据，跑 ~20 story 后人工复盘，必要时换仲裁模型 |
+| Kimi/DS 的 JSON 遵循度不稳 | 重试 + strict 降级 + 正则抽取围栏 JSON 兜底 |
+| OpenCode 版本升级破坏 headless 参数 | 全部隔离在 Adapter + doctor 自检 + CI pin 版本 |
+| Dashboard 索引与文件不一致 | collector 幂等（行号游标），重启全量重扫，SQLite 仅缓存 |
+| full 模式过夜烧钱死循环 | 四重闸：per_story_fix_limit / stall_limit / max_retry_steps / max_cost_usd，任一触发 paused + 通知 |
+| 主分支在 run 期间被用户改动 | 合并前 merge-base 漂移检查，超阈值上交人类 |
+
+---
+
+## 16. 开放问题（实现前确认）
+
+1. 当前 OpenCode 版本 headless 运行确切参数与 JSON 输出格式（M0 第一天用探测脚本确认）。
+2. Kimi K2 直连 API 与 Anthropic 兼容端点二选一的实测输出质量与稳定性。
+3. Dashboard gate 应答鉴权：本地单机 localhost + same-origin 是否够用（取决于是否暴露局域网）。
+4. `files` 越界门禁严格度：先 warning 跑两周看误报率，再决定是否升 hard fail。
+5. Debate 分歧演化可视化：v1.5 先表格 + 轮次 tab，图表（Sankey 等）留 v2。
