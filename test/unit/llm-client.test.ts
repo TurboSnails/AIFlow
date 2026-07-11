@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { callReviewer, callLlm, callLlmFanOut } from "../../src/llm/client";
 import type { ModelProfile } from "../../src/config/schema";
 
@@ -240,6 +240,37 @@ test("callReviewer forwards maxRetrySteps and maxTokenCost to callLlm", async ()
     )) as unknown as typeof fetch;
 
   await expect(callReviewer(pricedProfile, "review", "unknown", fakeFetch, 0, 1)).rejects.toThrow("max_token_cost");
+});
+
+test("callLlm retries 429 and succeeds using injected doCall and sleepFn", async () => {
+  let calls = 0;
+  const doCall = mock(async () => {
+    calls++;
+    if (calls < 2) {
+      const e = new Error("rate limited");
+      (e as unknown as { status: number }).status = 429;
+      throw e;
+    }
+    return { text: "ok", usage: { inTok: 1, outTok: 1, costUsd: 0 } };
+  });
+  const sleepFn = mock(async (_ms: number) => {});
+  const result = await callLlm({ profile, prompt: "hi" }, { doCall, sleepFn });
+  expect(result.text).toBe("ok");
+  expect(calls).toBe(2);
+  expect(sleepFn).toHaveBeenCalledTimes(1);
+});
+
+test("callLlm does not retry BudgetExceededError", async () => {
+  let calls = 0;
+  const { BudgetExceededError } = await import("../../src/gate/budget");
+  const doCall = mock(async () => {
+    calls++;
+    throw new BudgetExceededError("Token cost 100 exceeds max_token_cost limit 10");
+  });
+  const sleepFn = mock(async (_ms: number) => {});
+  await expect(callLlm({ profile, prompt: "hi" }, { doCall, sleepFn })).rejects.toBeInstanceOf(BudgetExceededError);
+  expect(calls).toBe(1);
+  expect(sleepFn).toHaveBeenCalledTimes(0);
 });
 
 test("callLlm computes costUsd from ModelProfile.price when configured", async () => {

@@ -136,10 +136,10 @@ export const StageConfigSchema = z.discriminatedUnion("type", [
 export type StageConfig = z.infer<typeof StageConfigSchema>;
 
 export const BudgetConfigSchema = z.object({
-  max_cost_usd: z.number().positive(),
+  max_cost_usd: z.number().positive().optional(),
   max_retry_steps: z.number().int().positive().default(5),
-  max_token_cost: z.number().positive().optional(),
-  warn_at_pct: z.array(z.number().positive().max(1)).optional(),
+  max_token_cost: z.number().int().positive().optional(),
+  warn_at_pct: z.array(z.number().min(0).max(1)).optional(),
 });
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 

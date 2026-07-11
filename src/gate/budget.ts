@@ -1,3 +1,22 @@
+export class BudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BudgetExceededError";
+  }
+}
+
+export function assertPerCallBudget(
+  usage: { inTok: number; outTok: number },
+  limit: number | undefined
+): void {
+  if (!limit) return;
+  if (usage.inTok + usage.outTok > limit) {
+    throw new BudgetExceededError(
+      `Token cost ${usage.inTok + usage.outTok} exceeds max_token_cost limit ${limit}`
+    );
+  }
+}
+
 export interface BudgetTracker {
   limitUsd?: number;
   /** Records a newly-spent amount and returns true once cumulative spend reaches the limit. */

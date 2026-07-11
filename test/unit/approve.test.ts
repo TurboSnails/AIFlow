@@ -407,7 +407,7 @@ autonomy: full
 budget:
   max_cost_usd: 1
   max_retry_steps: 7
-  max_token_cost: 0.5
+  max_token_cost: 500
 stages:
   - id: brainstorm
     type: brainstorm
@@ -445,7 +445,7 @@ stages:
     expect(result.state!.stages[0].status).toBe("done");
     expect(result.state!.cost).toEqual({ input_tokens: 10, output_tokens: 20, est_usd: 0.05 });
     expect(seenOptions.maxRetrySteps).toBe(7);
-    expect(seenOptions.maxTokenCost).toBe(0.5);
+    expect(seenOptions.maxTokenCost).toBe(500);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
