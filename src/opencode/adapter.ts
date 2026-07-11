@@ -13,5 +13,5 @@ import { callLlm, type LlmCallOptions, type LlmCallResult, type LlmDeps } from "
  * behaviour as `callLlm`.  Accepts an optional `deps` parameter for testing.
  */
 export async function runOpenCode(opts: LlmCallOptions, deps?: LlmDeps): Promise<LlmCallResult> {
-  return deps ? callLlm(opts, deps) : callLlm(opts);
+  return callLlm(opts, deps);
 }

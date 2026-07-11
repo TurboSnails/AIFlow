@@ -9,7 +9,7 @@ export function assertPerCallBudget(
   usage: { inTok: number; outTok: number },
   limit: number | undefined
 ): void {
-  if (!limit) return;
+  if (limit === undefined || limit === null) return;
   if (usage.inTok + usage.outTok > limit) {
     throw new BudgetExceededError(
       `Token cost ${usage.inTok + usage.outTok} exceeds max_token_cost limit ${limit}`

@@ -263,12 +263,13 @@ test("callLlm retries 429 and succeeds using injected doCall and sleepFn", async
 test("callLlm does not retry BudgetExceededError", async () => {
   let calls = 0;
   const { BudgetExceededError } = await import("../../src/gate/budget");
+  // doCall returns normally; assertPerCallBudget in callLlm detects the overrun
   const doCall = mock(async () => {
     calls++;
-    throw new BudgetExceededError("Token cost 100 exceeds max_token_cost limit 10");
+    return { text: "hi", usage: { inTok: 50, outTok: 50, costUsd: 0 } };
   });
   const sleepFn = mock(async (_ms: number) => {});
-  await expect(callLlm({ profile, prompt: "hi" }, { doCall, sleepFn })).rejects.toBeInstanceOf(BudgetExceededError);
+  await expect(callLlm({ profile, prompt: "hi", maxTokenCost: 10 }, { doCall, sleepFn })).rejects.toBeInstanceOf(BudgetExceededError);
   expect(calls).toBe(1);
   expect(sleepFn).toHaveBeenCalledTimes(0);
 });

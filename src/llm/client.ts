@@ -59,7 +59,6 @@ async function rawCallLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
     jsonMode = false,
     thinking = false,
     fetchFn = fetch,
-    maxTokenCost,
   } = opts;
   if (!profile.api_key_env) throw new Error("Profile has no api_key_env configured");
   const apiKey = process.env[profile.api_key_env];
@@ -94,12 +93,10 @@ async function rawCallLlm(opts: LlmCallOptions): Promise<LlmCallResult> {
   const inPerM = profile.price?.in_per_m ?? profile.input_cost_per_1m ?? 0;
   const outPerM = profile.price?.out_per_m ?? profile.output_cost_per_1m ?? 0;
   const costUsd = (inTok / 1_000_000) * inPerM + (outTok / 1_000_000) * outPerM;
-  const result: LlmCallResult = {
+  return {
     text: data.choices[0].message.content,
     usage: { inTok, outTok, costUsd },
   };
-  assertPerCallBudget(result.usage, maxTokenCost);
-  return result;
 }
 
 const defaultDeps: LlmDeps = {
@@ -113,7 +110,9 @@ export async function callLlm(opts: LlmCallOptions, deps: LlmDeps = defaultDeps)
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await deps.doCall(opts);
+      const result = await deps.doCall(opts);
+      assertPerCallBudget(result.usage, opts.maxTokenCost);
+      return result;
     } catch (err) {
       lastErr = err;
       if (err instanceof BudgetExceededError) throw err;
