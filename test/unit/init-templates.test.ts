@@ -49,7 +49,7 @@ test("every profile referenced by a bundled pipeline template exists in the defa
         expect(knownProfiles.has(stage.synthesizer)).toBe(true);
       }
       if (stage.type === "ralph_loop" && stage.gate.ai_review.enabled) {
-        expect(knownProfiles.has(stage.gate.ai_review.model)).toBe(true);
+        expect(knownProfiles.has(stage.gate.ai_review.model!)).toBe(true);
       }
     }
 

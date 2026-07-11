@@ -79,19 +79,21 @@ test("runCommand does not require --requirement when the pipeline has no brainst
   }
 });
 
-test("runCommand stops with a paused stage when given an already-aborted signal", async () => {
+test("runCommand throws before creating a run dir when given an already-aborted signal", async () => {
   const dir = await setupProject(`name: test-pipeline\nstages:\n  - id: plan\n    type: plan\n    model: main-dev\n`);
   try {
     const controller = new AbortController();
     controller.abort();
-    const state = await runCommand(
-      dir,
-      "test-pipeline",
-      { callLlm: async () => ({ text: "unused", usage: { inTok: 0, outTok: 0, costUsd: 0 } }) },
-      {},
-      controller.signal
-    );
-    expect(state.stages[0].status).toBe("paused");
+    await expect(
+      runCommand(
+        dir,
+        "test-pipeline",
+        { callLlm: async () => ({ text: "unused", usage: { inTok: 0, outTok: 0, costUsd: 0 } }) },
+        {},
+        controller.signal
+      )
+    ).rejects.toThrow("Aborted while waiting for run lock");
+    expect(existsSync(join(dir, ".aiflow", "runs"))).toBe(false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -148,7 +150,7 @@ test("runCommand emits worktree conflict and merge_conflict_unarbitrable events 
       {
         runAgentTask: agent,
         createWorktree: async () => ctx,
-        removeWorktree: async () => {},
+        removeWorktree: async () => true,
         tryMergeBack: async () => "conflict",
         resolveConflict: async () => "aborted",
         diffConflictFileNames: async () => ["src/a.ts", "src/b.ts"],
@@ -190,7 +192,7 @@ test("runCommand emits worktree conflict and merge_conflict_unarbitrable events 
       {
         runAgentTask: agent,
         createWorktree: async () => ctx,
-        removeWorktree: async () => {},
+        removeWorktree: async () => true,
         tryMergeBack: async () => "drift",
         diffFilesSinceMergeBase: async () => ["main/a.ts", "main/b.ts"],
       },

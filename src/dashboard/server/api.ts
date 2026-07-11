@@ -9,6 +9,7 @@ import { readSpecBoard } from "../../specboard/specboard";
 import { readGateAnswer, writeGateAnswer } from "../../gate-answer/answer";
 import { runApprove } from "../../commands/approve";
 import type { EngineState } from "../../engine/state";
+import { acquireRunLock, LockWaitAbortedError } from "../../lock";
 
 export interface ApiDeps {
   db: Database;
@@ -215,7 +216,8 @@ export function createApp(deps: ApiDeps): Express {
       res.status(503).json({ error: "runsRoot not configured" });
       return;
     }
-    const runDir = safeRunDir(deps.runsRoot, req.params.runId as string);
+    const runId = req.params.runId as string;
+    const runDir = safeRunDir(deps.runsRoot, runId);
     if (!runDir) {
       res.status(404).json({ error: "run not found" });
       return;
@@ -225,22 +227,62 @@ export function createApp(deps: ApiDeps): Express {
       res.status(400).json({ error: "invalid body" });
       return;
     }
-    const answer = parse.data;
-    const existing = readGateAnswer(runDir);
-    writeGateAnswer(runDir, {
-      stage: answer.stage,
-      prompt: existing?.prompt ?? "",
-      status: "answered",
-      answered_at: new Date().toISOString(),
-      action: answer.action,
-      reason: answer.reason ?? null,
-    });
-    // resume asynchronously so the HTTP response returns immediately
+    const { stage, action, reason } = parse.data;
+
+    // Acquire the run lock before mutating gate-answer.json so dashboard and CLI
+    // cannot race on the same waiting_human stage.
+    let lock: { release: () => void };
+    try {
+      lock = await acquireRunLock(dirname(dirname(deps.runsRoot)), runId, {
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err) {
+      if (err instanceof LockWaitAbortedError) {
+        res.status(503).json({ error: "could not acquire run lock" });
+        return;
+      }
+      res.status(500).json({ error: "lock error" });
+      return;
+    }
+
+    try {
+      const state = readStateJson(runDir);
+      if (!state) {
+        res.status(409).json({ error: "stage not waiting" });
+        return;
+      }
+      const target = state.stages.find((s) => s.id === stage);
+      if (!target || target.status !== "waiting_human") {
+        res.status(409).json({ error: "stage not waiting" });
+        return;
+      }
+      const existing = readGateAnswer(runDir);
+      writeGateAnswer(runDir, {
+        stage,
+        prompt: existing?.prompt ?? "",
+        status: "answered",
+        answered_at: new Date().toISOString(),
+        action,
+        reason: reason ?? null,
+      });
+    } finally {
+      lock.release();
+    }
+
+    res.json({ ok: true });
+
+    // Resume asynchronously so the HTTP response returns immediately. The lock is
+    // already released; runApprove will re-acquire it before mutating state.
     const cwd = dirname(dirname(deps.runsRoot));
-    (deps.runApprove ?? runApprove)(cwd, { runId: req.params.runId as string, stage: answer.stage }).catch((err: unknown) => {
+    (deps.runApprove ?? runApprove)(cwd, {
+      runId,
+      stage,
+      action,
+      by: "dashboard",
+      reason: reason ?? null,
+    }).catch((err: unknown) => {
       console.error("gate-answer resume failed", err);
     });
-    res.json({ ok: true });
   });
 
   const clientDist = join(dirname(import.meta.dir), "client", "dist");

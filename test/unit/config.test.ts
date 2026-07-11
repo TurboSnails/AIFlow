@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../../src/config/loader";
+import type { RalphLoopStageConfig } from "../../src/config/schema";
 
 function withTempDir(fn: (dir: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), "aiflow-config-test-"));
@@ -390,7 +391,7 @@ stages:
   const cfg = loadPipelineConfig(path);
   expect(cfg.autonomy).toBe("full");
   expect(cfg.budget?.max_retry_steps).toBe(5);
-  expect(cfg.stages[0].gate.ai_review.reviewers).toEqual(["kimi", "ds"]);
+  expect((cfg.stages[0] as RalphLoopStageConfig).gate.ai_review.reviewers).toEqual(["kimi", "ds"]);
 });
 
 test("loads project config defaults", () => {

@@ -23,7 +23,7 @@ export interface EngineState {
   worktree?: { path: string; branch: string };
   stages: StageState[];
   cost: { input_tokens: number; output_tokens: number; est_usd: number };
-  budget?: { limit_usd: number; warn_at_pct?: number[] };
+  budget?: { limit_usd?: number; warn_at_pct?: number[] };
 }
 
 export function writeStateAtomic(runDir: string, state: EngineState): void {

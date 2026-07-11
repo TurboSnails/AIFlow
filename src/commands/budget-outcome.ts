@@ -11,6 +11,7 @@ export function formatBudgetOutcomeLine(state: EngineState): string | undefined 
   if (!budget) return undefined;
   const spent = state.cost.est_usd;
   const limit = budget.limit_usd;
+  if (limit === undefined) return undefined;
   const spentStr = `$${spent.toFixed(4)}`;
   const limitStr = `$${limit.toFixed(4)}`;
   if (spent >= limit) {

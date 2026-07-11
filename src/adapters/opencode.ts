@@ -116,14 +116,14 @@ export async function runAgentTask(task: AgentTask, spawnFn: SpawnFn = defaultSp
             out_tok: event.part.tokens.output,
             cost_usd: event.part.cost,
           });
-          if (task.maxTokenCost !== undefined && costUsd > task.maxTokenCost) {
+          if (task.maxTokenCost !== undefined && inTok + outTok > task.maxTokenCost) {
             abortedByBudget = true;
             appendEvent(task.runDir, {
               ts: new Date().toISOString(),
               type: "budget_warning",
               stage: task.stage,
               threshold_pct: 100,
-              spent_usd: costUsd,
+              spent_usd: inTok + outTok,
               limit_usd: task.maxTokenCost,
             });
             controller.abort();

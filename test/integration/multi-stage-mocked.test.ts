@@ -8,6 +8,7 @@ import { runApprove } from "../../src/commands/approve";
 import { runReject } from "../../src/commands/reject";
 import { runPlanStage } from "../../src/runners/plan";
 import type { ModelProfile, PlanStageConfig } from "../../src/config/schema";
+import type { WorktreeContext } from "../../src/worktree/manager";
 import { runCost, summarizeRunCost } from "../../src/commands/cost";
 import { readRunSnapshot } from "../../src/commands/monitor";
 

@@ -71,7 +71,7 @@ function loadProjectConfigWithDefaults(cwd: string): ProjectConfig {
   return { max_drift_files: 50, on_unresolved: "ask_human", dashboard: { port: 3000, host: "127.0.0.1" } };
 }
 
-function selectMainDevProfile(profiles: Record<string, ModelProfile>): ModelProfile {
+export function selectMainDevProfile(profiles: Record<string, ModelProfile>): ModelProfile {
   const mainDev = profiles["main-dev"] ?? profiles["mainDev"];
   if (mainDev) return mainDev;
   const keys = Object.keys(profiles);
@@ -83,7 +83,14 @@ function selectMainDevProfile(profiles: Record<string, ModelProfile>): ModelProf
 
 export async function runApprove(
   cwd: string,
-  opts: { runId?: string; stage?: string; lockOptions?: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed"> },
+  opts: {
+    runId?: string;
+    stage?: string;
+    action?: "approve" | "reject";
+    by?: "cli" | "dashboard";
+    reason?: string | null;
+    lockOptions?: Pick<AcquireLockOptions, "onWaiting" | "onStaleReclaimed">;
+  },
   deps?: EngineDeps & { callLlm?: typeof callLlm },
   signal?: AbortSignal,
   isCleanFn?: (cwd: string) => Promise<boolean>
@@ -153,6 +160,15 @@ export async function runApprove(
           est_usd: state.cost.est_usd + usage.costUsd,
         };
 
+        appendEvent(runDir, {
+          ts: new Date().toISOString(),
+          type: "stage_cost",
+          stage: stageId,
+          in_tok: usage.inTok,
+          out_tok: usage.outTok,
+          cost_usd: usage.costUsd,
+        });
+
         const maxCostUsd = pipelineConfig.budget?.max_cost_usd;
         if (maxCostUsd !== undefined && state.cost.est_usd >= maxCostUsd) {
           state = {
@@ -179,20 +195,22 @@ export async function runApprove(
       stages: state.stages.map((s, idx) => (idx === targetIndex ? { ...s, status: "done", reason: undefined } : s)),
     };
   } else {
+    const action = opts.action ?? "approve";
+    const by = opts.by ?? "cli";
     writeGateAnswer(runDir, {
       stage: stageId,
       prompt: stageConfig.prompt,
       status: "answered",
       answered_at: answeredAt,
-      action: "approve",
-      reason: null,
+      action,
+      reason: opts.reason ?? null,
     });
     appendEvent(runDir, {
       ts: answeredAt,
       type: "gate_answered",
       stage: stageId,
-      by: "cli",
-      action: "approve",
+      by,
+      action,
     });
   }
 

@@ -3,7 +3,7 @@ import { symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { loadModelsConfig, loadPipelineConfig, loadProjectConfig } from "../config/loader";
 import { hashConfigDir as realHashConfigDir } from "../config/config-hash";
-import { acquireRunLock, LockWaitAbortedError, type AcquireLockOptions } from "../lock";
+import { acquireRunLock, type AcquireLockOptions } from "../lock";
 import { writeFileAtomic } from "../atomic/atomic-write";
 import { createRunId, runPipelineOnce, resolvePipelineDefaults, type EngineDeps, type StageOutcome } from "../engine/engine";
 import { runRalphLoop } from "../runners/ralph-loop";
@@ -12,6 +12,7 @@ import { runSpecStage } from "../runners/spec";
 import { runPlanStage } from "../runners/plan";
 import { runHumanGateStage } from "../runners/human-gate";
 import { runAgentTask as realRunAgentTask, type AgentTask, type AgentResult } from "../adapters/opencode";
+import { runApprove, selectMainDevProfile } from "../commands/approve";
 import { runReviewGate as realRunReviewGate } from "../gate/review-gate";
 import { runChecks } from "../gate/check-runner";
 import type { BudgetTracker } from "../gate/budget";
@@ -119,16 +120,7 @@ export async function runCommand(
   await assertCleanIfAutoClean(cwd, pipelineConfig, pipelineName);
 
   const effectiveRunId = runId ?? createRunId();
-  let lock = { release: () => {} };
-  let ownLock = false;
-  try {
-    lock = await acquireRunLock(cwd, effectiveRunId, { signal, ...(overrides.lockOptions ?? {}) });
-    ownLock = true;
-  } catch (err) {
-    if (!(err instanceof LockWaitAbortedError)) throw err;
-    // Signal was already aborted before the lock could be acquired.
-    // The engine will return a paused state immediately — proceed without holding the lock.
-  }
+  const lock = await acquireRunLock(cwd, effectiveRunId, { signal, ...(overrides.lockOptions ?? {}) });
   try {
   const runDir = join(cwd, ".aiflow", "runs", effectiveRunId);
   mkdirSync(runDir, { recursive: true });
@@ -232,7 +224,7 @@ export async function runCommand(
       spec: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
         runSpecStage(stageConfig as SpecStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { runAgentTask: runAgentTaskWithBudget }, budget),
       plan: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, budget) =>
-        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { callLlm: callLlmFn }, budget),
+        runPlanStage(stageConfig as PlanStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, { callLlm: callLlmFn, maxRetrySteps: pipelineConfig.budget?.max_retry_steps, maxTokenCost: pipelineConfig.budget?.max_token_cost }, budget),
       human_gate: (stageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal, _budget) =>
         runHumanGateStage(stageConfig as import("../config/schema").HumanGateStageConfig, stageState, profiles, stageCwd, stageRunDir, nowFn, stageSignal),
     },
@@ -300,9 +292,7 @@ export async function runCommand(
               path: worktreeCtx.worktreePath,
             });
             const files = await conflictFilesFn(worktreeCtx.originalCwd);
-            const mainDev =
-              modelsConfig.profiles.mainDev ??
-              modelsConfig.profiles[Object.keys(modelsConfig.profiles)[0]];
+            const mainDev = selectMainDevProfile(modelsConfig.profiles);
             const resolution = await resolveConflictWithAI(
               worktreeCtx,
               mainDev,
@@ -405,6 +395,6 @@ export async function runCommand(
     }
   }
   } finally {
-    if (ownLock) lock.release();
+    lock.release();
   }
 }

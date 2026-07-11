@@ -14,6 +14,8 @@ import type { StageState } from "../engine/state";
 export interface PlanDeps {
   callLlm?: typeof callLlm;
   registerArtifact?: typeof registerArtifact;
+  maxRetrySteps?: number;
+  maxTokenCost?: number;
 }
 
 export const defaultDeps: PlanDeps = { callLlm, registerArtifact };
@@ -73,7 +75,14 @@ export async function runPlanStage(
         ? basePrompt
         : `${basePrompt}\n\nPrevious attempt failed with: ${lastError}. Please fix and return valid JSON only.`;
 
-    const result = await doCallLlm({ profile, prompt, jsonMode: true });
+    const result = await doCallLlm({
+      profile,
+      prompt,
+      jsonMode: true,
+      stage: stageConfig.id,
+      maxRetrySteps: deps.maxRetrySteps,
+      maxTokenCost: deps.maxTokenCost,
+    });
     totalUsage = addUsage(totalUsage, result.usage);
 
     if (budget.record(result.usage.costUsd)) {

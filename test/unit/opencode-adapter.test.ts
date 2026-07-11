@@ -79,7 +79,7 @@ test("runAgentTask returns ok:false when the subprocess exits non-zero", async (
   }
 });
 
-test("runAgentTask aborts and reports ok:false when cumulative cost exceeds maxTokenCost", async () => {
+test("runAgentTask aborts and reports ok:false when cumulative tokens exceed maxTokenCost", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "aiflow-adapter-budget-"));
   try {
     let killed = false;
@@ -100,13 +100,13 @@ test("runAgentTask aborts and reports ok:false when cumulative cost exceeds maxT
       },
     });
 
-    const task = { ...baseTask(runDir), maxTokenCost: 0.1 };
+    const task = { ...baseTask(runDir), maxTokenCost: 50 };
     const result = await runAgentTask(task, fakeSpawn);
 
     expect(killed).toBe(true);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("max_token_cost_exceeded");
-    expect(result.usage.costUsd).toBeGreaterThan(0.1);
+    expect(result.usage.inTok + result.usage.outTok).toBeGreaterThan(50);
 
     const events = readEvents(runDir);
     const warning = events.find((e) => e.type === "budget_warning");

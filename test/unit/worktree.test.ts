@@ -82,7 +82,7 @@ describe("tryMergeBack", () => {
     const { deps, calls } = makeDeps();
     const ctx = { originalCwd: "/repo", worktreePath: "/repo-aiflow-20260710_abc123", branch: "aiflow/20260710_abc123" };
 
-    const result = await tryMergeBack(ctx, "full", deps);
+    const result = await tryMergeBack(ctx, "full", undefined, deps);
 
     expect(result).toBe("skipped");
     expect(calls).toHaveLength(0);

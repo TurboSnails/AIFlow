@@ -1,4 +1,5 @@
 import type { ModelProfile } from "../config/schema";
+import { sanitizeSecrets } from "../commands/report";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { appendEvent } from "../events/events";
 import type { LlmRetryAiflowEvent } from "../events/new-events";
@@ -124,7 +125,7 @@ export async function callLlm(opts: LlmCallOptions, deps: LlmDeps = defaultDeps)
           type: "llm_retry",
           stage,
           attempt: attempt + 1,
-          error: String(err),
+          error: sanitizeSecrets(String(err)),
         };
         appendEvent(ctx.runDir, event);
       }
